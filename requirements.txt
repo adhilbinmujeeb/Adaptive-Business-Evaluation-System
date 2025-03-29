@@ -1,0 +1,9 @@
+streamlit
+pymongo
+pandas
+numpy
+scipy
+matplotlib
+requests
+groq
+python-dotenv
