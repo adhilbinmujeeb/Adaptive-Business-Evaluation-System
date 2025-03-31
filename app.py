@@ -873,6 +873,6 @@ elif "Marketplace" in page:
 # Footer
 st.markdown("""
 <div style='background-color: #F8FAFC; padding: 1rem; border-top: 1px solid #E2E8F0; text-align: center; font-size: 0.8rem; color: #64748B; margin-top: 2rem;'>
-    Business Insights Hub © 2025 | Powered by Groq AI | Created by ABM 
+    Business Insights Hub © 2025 | Powered by Groq AI |  
 </div>
 """, unsafe_allow_html=True)
