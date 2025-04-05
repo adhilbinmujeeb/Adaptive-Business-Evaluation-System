@@ -129,15 +129,7 @@ def get_business(business_name):
 def get_all_businesses(limit=2072):
     return list(business_collection.find().limit(limit))
 
-def match_question(query_embedding, questions):
-    best_match = None
-    highest_similarity = -1
-    for q in questions:
-        similarity = 1 - cosine(query_embedding, q['embedding'])
-        if similarity > highest_similarity:
-            highest_similarity = similarity
-            best_match = q
-    return best_match
+
 
 def groq_qna(query, context=None):
     try:
@@ -326,10 +318,8 @@ with st.sidebar:
 
     st.markdown("### Navigation")
     page = st.radio("", [
-        "🔍 Smart Q&A",
         "💰 Company Valuation",
         "📊 Business Assessment",
-        "🌐 Marketplace"
     ])
 
     st.markdown("---")
@@ -354,47 +344,6 @@ if st.session_state.sample_question:
 else:
     sample_query = ""
 
-# 1. Smart Q&A
-if "Smart Q&A" in page:
-    st.markdown("# 🔍 Smart Business Intelligence")
-    st.markdown("Get expert answers to your business questions powered by AI.")
-
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        query = st.text_input("Ask a question about business strategy, valuation, market trends, etc.",
-                              placeholder="E.g., How does this business make money?", value=sample_query)
-    with col2:
-        business_name = st.selectbox("Select Business Context (Optional)", ["None"] + business_names)
-
-    if query:
-        submit_button = st.button("Get Insights", use_container_width=True)
-        if submit_button:
-            if not query.strip():
-                st.warning("Please enter a question.")
-            else:
-                with st.spinner("Analyzing your question..."):
-                    if business_name != "None":
-                        business = get_business(business_name)
-                        response = groq_qna(query, str(business))
-                    else:
-                        response = groq_qna(query)
-
-                    st.markdown("<div class='card'>", unsafe_allow_html=True)
-                    st.markdown("### 💡 Expert Analysis")
-                    st.markdown(response)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-    with st.expander("Sample Questions"):
-        sample_questions = [
-            "How does this business make money?",
-            "What stage is the company in?",
-            "What are their products or service?",
-            "What is their unique selling proposition?"
-        ]
-        for q in sample_questions:
-            if st.button(q, key=f"sample_{q}"):
-                st.session_state.sample_question = q
-                st.rerun()
 
 # 2. Company Valuation Estimator
 elif "Company Valuation" in page:
@@ -867,88 +816,8 @@ After completing the interview, prepare:
         
         st.markdown("</div>", unsafe_allow_html=True)
 
-# 4. Showcase Listings for Investors
-elif "Marketplace" in page:
-    st.markdown("# 🌐 Business Marketplace")
-    st.markdown("Connect businesses with investors.")
 
-    tabs = st.tabs(["🏢 List Your Business", "💸 Investor Dashboard"])
-
-    with tabs[0]:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown("## Create Your Business Listing")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            listing_name = st.text_input("Business Name", placeholder="E.g., Acme Technologies")
-            listing_industry = st.selectbox("Industry", [
-                "Technology", "E-commerce", "Healthcare", "Finance",
-                "Real Estate", "Manufacturing", "Retail", "Services",
-                "Food & Beverage", "Education", "Other"
-            ])
-            listing_revenue = st.number_input("Annual Revenue (USD)", min_value=0, step=10000, format="%i")
-        with col2:
-            listing_location = st.text_input("Location", placeholder="City, Country")
-            founding_year = st.number_input("Year Founded", min_value=1900, max_value=datetime.now().year, value=datetime.now().year)
-            team_size = st.number_input("Team Size", min_value=1, value=5)
-
-        listing_description = st.text_area("Business Description", height=150,
-                                          placeholder="Describe your business, value proposition, market opportunity, and why investors should be interested.")
-
-        col3, col4 = st.columns(2)
-        with col3:
-            investment_sought = st.number_input("Investment Amount Sought (USD)", min_value=0, step=50000, format="%i")
-            equity_offered = st.slider("Equity Offered (%)", min_value=0.0, max_value=100.0, value=15.0, step=0.5)
-        with col4:
-            listing_contact = st.text_input("Contact Email", placeholder="your.email@example.com")
-            website = st.text_input("Website URL", placeholder="https://yourbusiness.com")
-
-        if st.button("Submit Listing", use_container_width=True):
-            listing = {
-                "business_name": listing_name,
-                "industry": listing_industry,
-                "revenue": listing_revenue,
-                "description": listing_description,
-                "contact": listing_contact,
-                "location": listing_location,
-                "founded": founding_year,
-                "team_size": team_size,
-                "investment_sought": investment_sought,
-                "equity_offered": equity_offered,
-                "website": website,
-                "listed_date": datetime.now().isoformat()
-            }
-            listings_collection.insert_one(listing)
-            st.success("✅ Business listed successfully!")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with tabs[1]:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown("## Investor Dashboard")
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            industry_filter = st.multiselect("Filter by Industry", [
-                "Technology", "E-commerce", "Healthcare", "Finance",
-                "Real Estate", "Manufacturing", "Retail", "Services",
-                "Food & Beverage", "Education", "Other"
-            ])
-        with col2:
-            min_revenue = st.number_input("Minimum Revenue (USD)", min_value=0, step=50000, value=0)
-        with col3:
-            max_investment = st.number_input("Maximum Investment (USD)", min_value=0, step=100000, value=1000000)
-
-        query = {}
-        if industry_filter:
-            query["industry"] = {"$in": industry_filter}
-        if min_revenue > 0:
-            query["revenue"] = {"$gte": min_revenue}
-        if max_investment > 0:
-            query["investment_sought"] = {"$lte": max_investment}
-
-        listings = list(listings_collection.find(query))
-
+ 
         if listings:
             for listing in listings:
                 st.markdown(f"""
