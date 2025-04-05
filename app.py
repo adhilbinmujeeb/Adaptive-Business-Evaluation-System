@@ -346,7 +346,7 @@ else:
 
 
 # 2. Company Valuation Estimator
-elif "Company Valuation" in page:
+if "Company Valuation" in page:
     st.markdown("# 💰 Company Valuation Estimator")
     st.markdown("Estimate your company's value using multiple industry-standard valuation methods.")
 
