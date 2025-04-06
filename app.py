@@ -289,7 +289,7 @@ After completing the interview, prepare:
         ◦ Strategic recommendations
 """
         response = groq_client.chat.completions.create(
-            model="distil-whisper-large-v3-en",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"{context_str}\n\nQuery: {query}"}
