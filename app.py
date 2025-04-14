@@ -175,7 +175,7 @@ def groq_qna(query, context=None, model="meta-llama/llama-4-scout-17b-16e-instru
     Args:
         query (str): The user's query.
         context (str, optional): Additional context for the query. Defaults to None.
-        model (str): The Groq model to use (e.g., "llama3-8b-8192", "mixtral-8x7b-32768").
+        model (str): The Groq model to use (e.g., "meta-llama/llama-4-scout-17b-16e-instruct", "mixtral-8x7b-32768").
 
     Returns:
         str: The AI's response text, or an error message.
