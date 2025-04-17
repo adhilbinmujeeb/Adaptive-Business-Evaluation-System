@@ -223,33 +223,165 @@ class ValuationService:
         return base_multiple * adjustment
         
     def _calculate_confidence_score(
-        self,
-        business_profile: BusinessProfile,
-        method: ValuationMethod
-    ) -> float:
-        """Calculate confidence score for valuation method."""
-        base_score = 0.7
-        adjustments = 0.0
-        
+    self,
+    business_profile: BusinessProfile,
+    method: ValuationMethod
+) -> float:
+    """Calculate confidence score for valuation method."""
+    base_score = 0.7
+    adjustments = 0.0
+    
+    try:
         if method == ValuationMethod.REVENUE_MULTIPLE:
-            if business_profile.financial_metrics.revenue_growth > 0:
+            # Check revenue growth
+            revenue_growth = getattr(business_profile.financial_metrics, 'revenue_growth', None)
+            if revenue_growth is not None and isinstance(revenue_growth, (int, float)) and revenue_growth > 0:
                 adjustments += 0.1
-            if business_profile.financial_metrics.profit > 0:
+            
+            # Check profit
+            profit = getattr(business_profile.financial_metrics, 'profit', None)
+            if profit is not None and isinstance(profit, (int, float)) and profit > 0:
                 adjustments += 0.1
                 
         elif method == ValuationMethod.EBITDA_MULTIPLE:
-            if business_profile.financial_metrics.ebitda > 0:
+            # Check EBITDA
+            ebitda = getattr(business_profile.financial_metrics, 'ebitda', None)
+            if ebitda is not None and isinstance(ebitda, (int, float)) and ebitda > 0:
                 adjustments += 0.15
-            if business_profile.financial_metrics.ebitda_margin > 0.15:
+            
+            # Check EBITDA margin
+            ebitda_margin = getattr(business_profile.financial_metrics, 'ebitda_margin', None)
+            if ebitda_margin is not None and isinstance(ebitda_margin, (int, float)) and ebitda_margin > 0.15:
                 adjustments += 0.1
                 
         elif method == ValuationMethod.DCF:
-            if business_profile.financial_metrics.revenue_growth > 0:
+            # Check revenue growth
+            revenue_growth = getattr(business_profile.financial_metrics, 'revenue_growth', None)
+            if revenue_growth is not None and isinstance(revenue_growth, (int, float)) and revenue_growth > 0:
                 adjustments += 0.1
-            if business_profile.financial_metrics.profit > 0:
+            
+            # Check profit
+            profit = getattr(business_profile.financial_metrics, 'profit', None)
+            if profit is not None and isinstance(profit, (int, float)) and profit > 0:
                 adjustments += 0.1
+    except (AttributeError, TypeError) as e:
+        print(f"Warning: Error calculating confidence score: {str(e)}")
+        return base_score
+            
+    return min(0.95, base_score + adjustments)
+
+def _adjust_multiple(
+    self,
+    base_multiple: float,
+    business_profile: BusinessProfile,
+    industry_metrics: Dict[str, Any],
+    is_ebitda: bool = False
+) -> float:
+    """Adjust valuation multiple based on business metrics."""
+    adjustment = 1.0
+    
+    try:
+        # Growth rate adjustment
+        growth_rate = getattr(business_profile.financial_metrics, 'growth_rate', None)
+        avg_growth_rate = industry_metrics.get('avg_growth_rate', 0.1)
+        
+        if (growth_rate is not None and 
+            isinstance(growth_rate, (int, float)) and 
+            isinstance(avg_growth_rate, (int, float)) and 
+            growth_rate > avg_growth_rate):
+            adjustment += 0.2
+        
+        # Margin adjustment
+        if is_ebitda:
+            ebitda = getattr(business_profile.financial_metrics, 'ebitda', None)
+            revenue = getattr(business_profile.financial_metrics, 'revenue', None)
+            
+            if (ebitda is not None and revenue is not None and 
+                isinstance(ebitda, (int, float)) and 
+                isinstance(revenue, (int, float)) and 
+                revenue > 0):
+                ebitda_margin = ebitda / revenue
+                avg_ebitda_margin = industry_metrics.get('avg_ebitda_margin', 0.15)
                 
-        return min(0.95, base_score + adjustments)
+                if isinstance(avg_ebitda_margin, (int, float)) and ebitda_margin > avg_ebitda_margin:
+                    adjustment += 0.15
+        else:
+            profit = getattr(business_profile.financial_metrics, 'profit', None)
+            revenue = getattr(business_profile.financial_metrics, 'revenue', None)
+            
+            if (profit is not None and revenue is not None and 
+                isinstance(profit, (int, float)) and 
+                isinstance(revenue, (int, float)) and 
+                revenue > 0):
+                profit_margin = profit / revenue
+                avg_profit_margin = industry_metrics.get('avg_profit_margin', 0.1)
+                
+                if isinstance(avg_profit_margin, (int, float)) and profit_margin > avg_profit_margin:
+                    adjustment += 0.15
+        
+        # Market position adjustment
+        revenue = getattr(business_profile.financial_metrics, 'revenue', None)
+        market_size = getattr(business_profile.market_metrics, 'total_market_size', None)
+        
+        if (revenue is not None and market_size is not None and 
+            isinstance(revenue, (int, float)) and 
+            isinstance(market_size, (int, float)) and 
+            market_size > 0):
+            market_share = revenue / market_size
+            avg_market_share = industry_metrics.get('avg_market_share', 0.05)
+            
+            if isinstance(avg_market_share, (int, float)) and market_share > avg_market_share:
+                adjustment += 0.1
+                
+    except (AttributeError, TypeError, ZeroDivisionError) as e:
+        print(f"Warning: Error adjusting multiple: {str(e)}")
+        return base_multiple
+            
+    return base_multiple * adjustment
+
+def calculate_ebitda_multiple_valuation(
+    self,
+    business_profile: BusinessProfile,
+    industry_metrics: Dict[str, Any]
+) -> Optional[ValuationResult]:
+    """Calculate valuation using EBITDA multiple method."""
+    try:
+        ebitda = getattr(business_profile.financial_metrics, 'ebitda', None)
+        if not ebitda or not isinstance(ebitda, (int, float)) or ebitda <= 0:
+            return None
+            
+        # Get industry average multiple
+        industry_multiple = industry_metrics.get('ebitda_multiple', 8.0)
+        
+        # Adjust multiple based on margins and growth
+        adjusted_multiple = self._adjust_multiple(
+            base_multiple=industry_multiple,
+            business_profile=business_profile,
+            industry_metrics=industry_metrics,
+            is_ebitda=True
+        )
+        
+        value = ebitda * adjusted_multiple
+        
+        confidence_score = self._calculate_confidence_score(
+            business_profile=business_profile,
+            method=ValuationMethod.EBITDA_MULTIPLE
+        )
+        
+        return ValuationResult(
+            method=ValuationMethod.EBITDA_MULTIPLE,
+            value=value,
+            confidence_score=confidence_score,
+            multiplier_used=adjusted_multiple,
+            assumptions={
+                "industry_multiple": industry_multiple,
+                "adjusted_multiple": adjusted_multiple,
+                "annual_ebitda": ebitda
+            }
+        )
+    except Exception as e:
+        print(f"Error calculating EBITDA multiple valuation: {str(e)}")
+        return None
         
     def _calculate_wacc(self, business_profile: BusinessProfile) -> float:
         """Calculate Weighted Average Cost of Capital."""
