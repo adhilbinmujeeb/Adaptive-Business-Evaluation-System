@@ -10,95 +10,130 @@ class ValuationService:
     def __init__(self):
         self.db = DatabaseConnection()
 
-    def calculate_revenue_multiple_valuation(
-        self,
-        profile: BusinessProfile,
-        industry_metrics: Dict[str, Any]
-    ) -> ValuationResult:
-        """Calculate valuation using revenue multiple method."""
-        revenue = profile.financial_metrics.revenue
-        if not revenue or revenue <= 0:
-            return None
-
-        # Get industry-specific multiples
-        industry_config = VALUATION_METRICS.get(
-            profile.industry,
-            VALUATION_METRICS['default']
-        )
-        
-        stage_multiples = industry_config['revenue_multiple_ranges'][profile.business_stage.lower()]
-        
-        # Calculate base multiple
-        base_multiple = (stage_multiples['min'] + stage_multiples['max']) / 2
-        
-        # Adjust multiple based on growth and margins
-        growth_adjustment = 0.0
-        if profile.financial_metrics.revenue_growth:
-            growth_adjustment = min(max(profile.financial_metrics.revenue_growth - 0.15, -0.5), 0.5)
+    def _calculate_confidence_score(
+    self,
+    business_profile: BusinessProfile,
+    method: ValuationMethod
+) -> float:
+    """Calculate confidence score for valuation method."""
+    base_score = 0.7
+    adjustments = 0.0
+    
+    if method == ValuationMethod.REVENUE_MULTIPLE:
+        if (business_profile.financial_metrics.revenue_growth is not None and 
+            business_profile.financial_metrics.revenue_growth > 0):
+            adjustments += 0.1
+        if (business_profile.financial_metrics.profit is not None and 
+            business_profile.financial_metrics.profit > 0):
+            adjustments += 0.1
             
-        margin_adjustment = 0.0
-        if profile.financial_metrics.gross_margin:
-            margin_adjustment = min(max(profile.financial_metrics.gross_margin - 0.5, -0.3), 0.3)
+    elif method == ValuationMethod.EBITDA_MULTIPLE:
+        if (business_profile.financial_metrics.ebitda is not None and 
+            business_profile.financial_metrics.ebitda > 0):
+            adjustments += 0.15
+        if (business_profile.financial_metrics.ebitda_margin is not None and 
+            business_profile.financial_metrics.ebitda_margin > 0.15):
+            adjustments += 0.1
             
-        final_multiple = base_multiple * (1 + growth_adjustment + margin_adjustment)
-        
-        # Calculate valuation
-        value = revenue * final_multiple
-        
-        # Calculate confidence score
-        confidence_score = self._calculate_confidence_score(profile, 'revenue_multiple')
-        
-        return ValuationResult(
-            method=ValuationMethod.REVENUE_MULTIPLE,
-            value=value,
-            confidence_score=confidence_score,
-            multiplier_used=final_multiple,
-            assumptions={
-                "base_multiple": base_multiple,
-                "growth_adjustment": growth_adjustment,
-                "margin_adjustment": margin_adjustment
-            }
-        )
-
-    def calculate_ebitda_multiple_valuation(
-        self,
-        profile: BusinessProfile,
-        industry_metrics: Dict[str, Any]
-    ) -> ValuationResult:
-        """Calculate valuation using EBITDA multiple method."""
-        ebitda = profile.financial_metrics.ebitda
-        if not ebitda or ebitda <= 0:
-            return None
-
-        # Similar structure to revenue multiple calculation
-        industry_config = VALUATION_METRICS.get(
-            profile.industry,
-            VALUATION_METRICS['default']
-        )
-        
-        stage_multiples = industry_config['ebitda_multiple_ranges'][profile.business_stage.lower()]
-        base_multiple = (stage_multiples['min'] + stage_multiples['max']) / 2
-        
-        # Adjustments based on margins and growth
-        margin_adjustment = 0.0
-        if profile.financial_metrics.gross_margin:
-            margin_adjustment = min(max(profile.financial_metrics.gross_margin - 0.5, -0.3), 0.3)
+    elif method == ValuationMethod.DCF:
+        if (business_profile.financial_metrics.revenue_growth is not None and 
+            business_profile.financial_metrics.revenue_growth > 0):
+            adjustments += 0.1
+        if (business_profile.financial_metrics.profit is not None and 
+            business_profile.financial_metrics.profit > 0):
+            adjustments += 0.1
             
-        value = ebitda * base_multiple * (1 + margin_adjustment)
-        
-        confidence_score = self._calculate_confidence_score(profile, 'ebitda_multiple')
-        
-        return ValuationResult(
-            method=ValuationMethod.EBITDA_MULTIPLE,
-            value=value,
-            confidence_score=confidence_score,
-            multiplier_used=base_multiple,
-            assumptions={
-                "base_multiple": base_multiple,
-                "margin_adjustment": margin_adjustment
-            }
-        )
+    return min(0.95, base_score + adjustments)
 
+def _adjust_multiple(
+    self,
+    base_multiple: float,
+    business_profile: BusinessProfile,
+    industry_metrics: Dict[str, Any],
+    is_ebitda: bool = False
+) -> float:
+    """Adjust valuation multiple based on business metrics."""
+    adjustment = 1.0
+    
+    # Growth rate adjustment
+    if (business_profile.financial_metrics.growth_rate is not None and 
+        industry_metrics.get('avg_growth_rate') is not None and
+        business_profile.financial_metrics.growth_rate > industry_metrics.get('avg_growth_rate', 0.1)):
+        adjustment += 0.2
+    
+    # Margin adjustment
+    if is_ebitda:
+        if (business_profile.financial_metrics.ebitda is not None and 
+            business_profile.financial_metrics.revenue is not None and 
+            business_profile.financial_metrics.revenue > 0):
+            ebitda_margin = (
+                business_profile.financial_metrics.ebitda /
+                business_profile.financial_metrics.revenue
+            )
+            if ebitda_margin > industry_metrics.get('avg_ebitda_margin', 0.15):
+                adjustment += 0.15
+    else:
+        if (business_profile.financial_metrics.profit is not None and 
+            business_profile.financial_metrics.revenue is not None and 
+            business_profile.financial_metrics.revenue > 0):
+            profit_margin = (
+                business_profile.financial_metrics.profit /
+                business_profile.financial_metrics.revenue
+            )
+            if profit_margin > industry_metrics.get('avg_profit_margin', 0.1):
+                adjustment += 0.15
+    
+    # Market position adjustment
+    if (business_profile.financial_metrics.revenue is not None and 
+        business_profile.market_metrics.total_market_size is not None and 
+        business_profile.market_metrics.total_market_size > 0):
+        market_share = (
+            business_profile.financial_metrics.revenue /
+            business_profile.market_metrics.total_market_size
+        )
+        if market_share > industry_metrics.get('avg_market_share', 0.05):
+            adjustment += 0.1
+            
+    return base_multiple * adjustment
+
+def calculate_ebitda_multiple_valuation(
+    self,
+    business_profile: BusinessProfile,
+    industry_metrics: Dict[str, Any]
+) -> Optional[ValuationResult]:
+    """Calculate valuation using EBITDA multiple method."""
+    if not business_profile.financial_metrics.ebitda:
+        return None
+        
+    # Get industry average multiple
+    industry_multiple = industry_metrics.get('ebitda_multiple', 8.0)
+    
+    # Adjust multiple based on margins and growth
+    adjusted_multiple = self._adjust_multiple(
+        base_multiple=industry_multiple,
+        business_profile=business_profile,
+        industry_metrics=industry_metrics,
+        is_ebitda=True
+    )
+    
+    value = business_profile.financial_metrics.ebitda * adjusted_multiple
+    
+    confidence_score = self._calculate_confidence_score(
+        business_profile=business_profile,
+        method=ValuationMethod.EBITDA_MULTIPLE
+    )
+    
+    return ValuationResult(
+        method=ValuationMethod.EBITDA_MULTIPLE,
+        value=value,
+        confidence_score=confidence_score,
+        multiplier_used=adjusted_multiple,
+        assumptions={
+            "industry_multiple": industry_multiple,
+            "adjusted_multiple": adjusted_multiple,
+            "annual_ebitda": business_profile.financial_metrics.ebitda
+        }
+    )
     def calculate_dcf_valuation(
         self,
         profile: BusinessProfile,
