@@ -1,273 +1,304 @@
-from typing import Dict, List, Optional, Tuple
+from typing import List, Dict, Optional, Any
 import numpy as np
 from datetime import datetime
-from ..models.valuation import ValuationMethod, ValuationResult, ValuationSummary
-from ..models.business_profile import BusinessProfile
-from ..core.database import DatabaseConnection
-from ..core.config import VALUATION_METRICS
+
+# Change from relative to absolute imports
+from models.business_profile import BusinessProfile
+from models.valuation import ValuationMethod, ValuationResult, ValuationSummary
+from core.database import DatabaseConnection
+from core.llm_service import LLMService
 
 class ValuationService:
     def __init__(self):
         self.db = DatabaseConnection()
-
+        self.llm = LLMService()
+        
     def calculate_revenue_multiple_valuation(
         self,
-        profile: BusinessProfile,
+        business_profile: BusinessProfile,
         industry_metrics: Dict[str, Any]
-    ) -> ValuationResult:
+    ) -> Optional[ValuationResult]:
         """Calculate valuation using revenue multiple method."""
-        revenue = profile.financial_metrics.revenue
-        if not revenue or revenue <= 0:
+        if not business_profile.financial_metrics.revenue:
             return None
-
-        # Get industry-specific multiples
-        industry_config = VALUATION_METRICS.get(
-            profile.industry,
-            VALUATION_METRICS['default']
+            
+        # Get industry average multiple
+        industry_multiple = industry_metrics.get('revenue_multiple', 3.0)
+        
+        # Adjust multiple based on growth and profitability
+        adjusted_multiple = self._adjust_multiple(
+            base_multiple=industry_multiple,
+            business_profile=business_profile,
+            industry_metrics=industry_metrics
         )
         
-        stage_multiples = industry_config['revenue_multiple_ranges'][profile.business_stage.lower()]
+        value = business_profile.financial_metrics.revenue * adjusted_multiple
         
-        # Calculate base multiple
-        base_multiple = (stage_multiples['min'] + stage_multiples['max']) / 2
-        
-        # Adjust multiple based on growth and margins
-        growth_adjustment = 0.0
-        if profile.financial_metrics.revenue_growth:
-            growth_adjustment = min(max(profile.financial_metrics.revenue_growth - 0.15, -0.5), 0.5)
-            
-        margin_adjustment = 0.0
-        if profile.financial_metrics.gross_margin:
-            margin_adjustment = min(max(profile.financial_metrics.gross_margin - 0.5, -0.3), 0.3)
-            
-        final_multiple = base_multiple * (1 + growth_adjustment + margin_adjustment)
-        
-        # Calculate valuation
-        value = revenue * final_multiple
-        
-        # Calculate confidence score
-        confidence_score = self._calculate_confidence_score(profile, 'revenue_multiple')
+        confidence_score = self._calculate_confidence_score(
+            business_profile=business_profile,
+            method=ValuationMethod.REVENUE_MULTIPLE
+        )
         
         return ValuationResult(
             method=ValuationMethod.REVENUE_MULTIPLE,
             value=value,
             confidence_score=confidence_score,
-            multiplier_used=final_multiple,
+            multiplier_used=adjusted_multiple,
             assumptions={
-                "base_multiple": base_multiple,
-                "growth_adjustment": growth_adjustment,
-                "margin_adjustment": margin_adjustment
+                "industry_multiple": industry_multiple,
+                "adjusted_multiple": adjusted_multiple,
+                "annual_revenue": business_profile.financial_metrics.revenue
             }
         )
-
+        
     def calculate_ebitda_multiple_valuation(
         self,
-        profile: BusinessProfile,
+        business_profile: BusinessProfile,
         industry_metrics: Dict[str, Any]
-    ) -> ValuationResult:
+    ) -> Optional[ValuationResult]:
         """Calculate valuation using EBITDA multiple method."""
-        ebitda = profile.financial_metrics.ebitda
-        if not ebitda or ebitda <= 0:
+        if not business_profile.financial_metrics.ebitda:
             return None
-
-        # Similar structure to revenue multiple calculation
-        industry_config = VALUATION_METRICS.get(
-            profile.industry,
-            VALUATION_METRICS['default']
+            
+        # Get industry average multiple
+        industry_multiple = industry_metrics.get('ebitda_multiple', 8.0)
+        
+        # Adjust multiple based on margins and growth
+        adjusted_multiple = self._adjust_multiple(
+            base_multiple=industry_multiple,
+            business_profile=business_profile,
+            industry_metrics=industry_metrics,
+            is_ebitda=True
         )
         
-        stage_multiples = industry_config['ebitda_multiple_ranges'][profile.business_stage.lower()]
-        base_multiple = (stage_multiples['min'] + stage_multiples['max']) / 2
+        value = business_profile.financial_metrics.ebitda * adjusted_multiple
         
-        # Adjustments based on margins and growth
-        margin_adjustment = 0.0
-        if profile.financial_metrics.gross_margin:
-            margin_adjustment = min(max(profile.financial_metrics.gross_margin - 0.5, -0.3), 0.3)
-            
-        value = ebitda * base_multiple * (1 + margin_adjustment)
-        
-        confidence_score = self._calculate_confidence_score(profile, 'ebitda_multiple')
+        confidence_score = self._calculate_confidence_score(
+            business_profile=business_profile,
+            method=ValuationMethod.EBITDA_MULTIPLE
+        )
         
         return ValuationResult(
             method=ValuationMethod.EBITDA_MULTIPLE,
             value=value,
             confidence_score=confidence_score,
-            multiplier_used=base_multiple,
+            multiplier_used=adjusted_multiple,
             assumptions={
-                "base_multiple": base_multiple,
-                "margin_adjustment": margin_adjustment
+                "industry_multiple": industry_multiple,
+                "adjusted_multiple": adjusted_multiple,
+                "annual_ebitda": business_profile.financial_metrics.ebitda
             }
         )
-
+        
     def calculate_dcf_valuation(
         self,
-        profile: BusinessProfile,
-        projected_cash_flows: List[float],
-        discount_rate: float = 0.15,
-        terminal_growth_rate: float = 0.03
-    ) -> ValuationResult:
-        """Calculate valuation using DCF method."""
-        if not projected_cash_flows:
+        business_profile: BusinessProfile,
+        projected_cash_flows: List[float]
+    ) -> Optional[ValuationResult]:
+        """Calculate valuation using Discounted Cash Flow method."""
+        if not projected_cash_flows or len(projected_cash_flows) < 5:
             return None
-
-        # Calculate present value of projected cash flows
+            
+        # Calculate discount rate (WACC)
+        wacc = self._calculate_wacc(business_profile)
+        
+        # Calculate terminal value
+        terminal_growth_rate = 0.02  # 2% perpetual growth
+        terminal_value = (projected_cash_flows[-1] * (1 + terminal_growth_rate)) / (wacc - terminal_growth_rate)
+        
+        # Calculate present value of cash flows
         present_values = []
         for i, cf in enumerate(projected_cash_flows):
-            present_values.append(cf / (1 + discount_rate) ** (i + 1))
-
-        # Calculate terminal value
-        terminal_value = (projected_cash_flows[-1] * (1 + terminal_growth_rate)) / (discount_rate - terminal_growth_rate)
-        terminal_value_pv = terminal_value / (1 + discount_rate) ** len(projected_cash_flows)
-
-        # Total value is sum of PV of cash flows plus PV of terminal value
-        value = sum(present_values) + terminal_value_pv
+            present_values.append(cf / ((1 + wacc) ** (i + 1)))
         
-        confidence_score = self._calculate_confidence_score(profile, 'dcf')
+        # Add terminal value
+        present_values.append(terminal_value / ((1 + wacc) ** len(projected_cash_flows)))
+        
+        value = sum(present_values)
+        
+        confidence_score = self._calculate_confidence_score(
+            business_profile=business_profile,
+            method=ValuationMethod.DCF
+        )
         
         return ValuationResult(
             method=ValuationMethod.DCF,
             value=value,
             confidence_score=confidence_score,
             assumptions={
-                "discount_rate": discount_rate,
+                "wacc": wacc,
                 "terminal_growth_rate": terminal_growth_rate,
-                "projection_years": len(projected_cash_flows)
+                "projected_cash_flows": projected_cash_flows,
+                "terminal_value": terminal_value
             }
         )
-
+        
     def get_comparable_companies(
         self,
-        profile: BusinessProfile,
+        business_profile: BusinessProfile,
         limit: int = 5
     ) -> List[Dict[str, Any]]:
-        """Get comparable companies from the database."""
-        return self.db.find_similar_businesses(profile.industry, limit)
-
-    def _calculate_confidence_score(
-        self,
-        profile: BusinessProfile,
-        method: str
-    ) -> float:
-        """Calculate confidence score for valuation method."""
-        base_score = 0.7  # Start with a base confidence score
+        """Retrieve comparable companies from the database."""
+        return self.db.find_similar_businesses(
+            industry=business_profile.industry,
+            revenue_range=self._get_revenue_range(business_profile.financial_metrics.revenue),
+            business_stage=business_profile.business_stage,
+            limit=limit
+        )
         
-        if method == 'revenue_multiple':
-            if not profile.financial_metrics.revenue:
-                return 0.0
-            if profile.financial_metrics.revenue_growth:
-                base_score += 0.1
-            if profile.financial_metrics.gross_margin:
-                base_score += 0.1
-                
-        elif method == 'ebitda_multiple':
-            if not profile.financial_metrics.ebitda:
-                return 0.0
-            if profile.financial_metrics.gross_margin:
-                base_score += 0.15
-                
-        elif method == 'dcf':
-            base_score = 0.6  # DCF is inherently more speculative
-            if profile.financial_metrics.revenue_growth:
-                base_score += 0.1
-            if profile.financial_metrics.cash_flow:
-                base_score += 0.1
-                
-        # Adjust based on data completeness
-        completeness = self._calculate_data_completeness(profile)
-        base_score *= completeness
-        
-        return min(base_score, 1.0)
-
-    def _calculate_data_completeness(self, profile: BusinessProfile) -> float:
-        """Calculate completeness of business profile data."""
-        required_fields = [
-            profile.financial_metrics.revenue,
-            profile.financial_metrics.profit,
-            profile.market_metrics.market_size,
-            profile.target_customers,
-            profile.competitive_advantages
-        ]
-        
-        return sum(1 for field in required_fields if field) / len(required_fields)
-
     def generate_valuation_summary(
         self,
-        profile: BusinessProfile,
-        results: List[ValuationResult]
+        business_profile: BusinessProfile,
+        valuation_results: List[ValuationResult]
     ) -> ValuationSummary:
         """Generate a comprehensive valuation summary."""
-        if not results:
-            return None
-
-        # Calculate recommended range
-        values = [r.value for r in results]
-        confidence_scores = [r.confidence_score for r in results]
+        if not valuation_results:
+            raise ValueError("No valuation results provided")
+            
+        # Calculate weighted average value
+        total_weight = sum(result.confidence_score for result in valuation_results)
+        weighted_value = sum(
+            result.value * (result.confidence_score / total_weight)
+            for result in valuation_results
+        )
         
-        weighted_avg = np.average(values, weights=confidence_scores)
-        std_dev = np.std(values)
-        
-        recommended_range = {
-            "low": max(0, weighted_avg - std_dev),
-            "mid": weighted_avg,
-            "high": weighted_avg + std_dev
+        # Calculate range
+        std_dev = np.std([result.value for result in valuation_results])
+        value_range = {
+            "low": max(0, weighted_value - std_dev),
+            "mid": weighted_value,
+            "high": weighted_value + std_dev
         }
         
-        # Determine overall confidence level
-        avg_confidence = np.mean(confidence_scores)
-        if avg_confidence >= 0.8:
-            confidence_level = "High"
-        elif avg_confidence >= 0.6:
-            confidence_level = "Medium"
-        else:
-            confidence_level = "Low"
-        
-        # Get comparable companies
-        comparables = self.get_comparable_companies(profile)
+        # Get key factors and risks using LLM
+        key_factors = self._analyze_key_factors(business_profile)
+        risk_factors = self._analyze_risk_factors(business_profile)
         
         return ValuationSummary(
-            business_name=profile.business_name,
-            industry=profile.industry,
-            business_stage=profile.business_stage,
-            valuation_date=datetime.now().strftime("%Y-%m-%d"),
-            results=results,
-            recommended_range=recommended_range,
-            confidence_level=confidence_level,
-            key_factors=self._extract_key_factors(profile),
-            risk_factors=self._identify_risk_factors(profile)
+            business_profile=business_profile,
+            results=valuation_results,
+            recommended_range=value_range,
+            key_factors=key_factors,
+            risk_factors=risk_factors
         )
-
-    def _extract_key_factors(self, profile: BusinessProfile) -> List[str]:
-        """Extract key factors affecting valuation."""
-        factors = []
         
-        if profile.financial_metrics.revenue_growth and profile.financial_metrics.revenue_growth > 0.3:
-            factors.append("High revenue growth")
-            
-        if profile.financial_metrics.gross_margin and profile.financial_metrics.gross_margin > 0.6:
-            factors.append("Strong gross margins")
-            
-        if profile.competitive_advantages:
-            factors.append("Strong competitive advantages")
-            
-        if profile.market_metrics.market_growth_rate and profile.market_metrics.market_growth_rate > 0.1:
-            factors.append("Growing market")
-            
-        return factors
-
-    def _identify_risk_factors(self, profile: BusinessProfile) -> List[str]:
-        """Identify risk factors affecting valuation."""
-        risks = []
+    def _adjust_multiple(
+        self,
+        base_multiple: float,
+        business_profile: BusinessProfile,
+        industry_metrics: Dict[str, Any],
+        is_ebitda: bool = False
+    ) -> float:
+        """Adjust valuation multiple based on business metrics."""
+        adjustment = 1.0
         
-        if profile.financial_metrics.burn_rate and profile.financial_metrics.burn_rate > 0:
-            risks.append("High burn rate")
+        # Growth rate adjustment
+        if business_profile.financial_metrics.growth_rate > industry_metrics.get('avg_growth_rate', 0.1):
+            adjustment += 0.2
+        
+        # Margin adjustment
+        if is_ebitda:
+            ebitda_margin = (
+                business_profile.financial_metrics.ebitda /
+                business_profile.financial_metrics.revenue
+            )
+            if ebitda_margin > industry_metrics.get('avg_ebitda_margin', 0.15):
+                adjustment += 0.15
+        else:
+            profit_margin = (
+                business_profile.financial_metrics.profit /
+                business_profile.financial_metrics.revenue
+            )
+            if profit_margin > industry_metrics.get('avg_profit_margin', 0.1):
+                adjustment += 0.15
+        
+        # Market position adjustment
+        market_share = (
+            business_profile.financial_metrics.revenue /
+            business_profile.market_metrics.total_market_size
+        )
+        if market_share > industry_metrics.get('avg_market_share', 0.05):
+            adjustment += 0.1
             
-        if not profile.market_metrics.market_share or profile.market_metrics.market_share < 0.05:
-            risks.append("Low market share")
+        return base_multiple * adjustment
+        
+    def _calculate_confidence_score(
+        self,
+        business_profile: BusinessProfile,
+        method: ValuationMethod
+    ) -> float:
+        """Calculate confidence score for valuation method."""
+        base_score = 0.7
+        adjustments = 0.0
+        
+        if method == ValuationMethod.REVENUE_MULTIPLE:
+            if business_profile.financial_metrics.revenue_growth > 0:
+                adjustments += 0.1
+            if business_profile.financial_metrics.profit > 0:
+                adjustments += 0.1
+                
+        elif method == ValuationMethod.EBITDA_MULTIPLE:
+            if business_profile.financial_metrics.ebitda > 0:
+                adjustments += 0.15
+            if business_profile.financial_metrics.ebitda_margin > 0.15:
+                adjustments += 0.1
+                
+        elif method == ValuationMethod.DCF:
+            if business_profile.financial_metrics.revenue_growth > 0:
+                adjustments += 0.1
+            if business_profile.financial_metrics.profit > 0:
+                adjustments += 0.1
+                
+        return min(0.95, base_score + adjustments)
+        
+    def _calculate_wacc(self, business_profile: BusinessProfile) -> float:
+        """Calculate Weighted Average Cost of Capital."""
+        # Simplified WACC calculation
+        risk_free_rate = 0.03  # 3% risk-free rate
+        market_risk_premium = 0.06  # 6% market risk premium
+        beta = 1.2  # Assumed beta
+        
+        # Cost of equity
+        cost_of_equity = risk_free_rate + (beta * market_risk_premium)
+        
+        # Simplified WACC (assuming 100% equity financing for early-stage companies)
+        return cost_of_equity
+        
+    def _get_revenue_range(self, revenue: float) -> str:
+        """Get revenue range category."""
+        if revenue < 1_000_000:
+            return "0-1M"
+        elif revenue < 10_000_000:
+            return "1M-10M"
+        elif revenue < 50_000_000:
+            return "10M-50M"
+        else:
+            return "50M+"
             
-        if len(profile.market_metrics.competitors) > 5:
-            risks.append("Highly competitive market")
-            
-        if profile.challenges:
-            risks.extend(profile.challenges)
-            
-        return risks
+    def _analyze_key_factors(self, business_profile: BusinessProfile) -> List[str]:
+        """Analyze key value drivers using LLM."""
+        prompt = f"""
+        Analyze the following business profile and list 3-5 key value drivers:
+        - Industry: {business_profile.industry}
+        - Stage: {business_profile.business_stage}
+        - Revenue: ${business_profile.financial_metrics.revenue:,.2f}
+        - Growth Rate: {business_profile.financial_metrics.growth_rate}
+        - Market Size: ${business_profile.market_metrics.total_market_size:,.2f}
+        """
+        
+        response = self.llm.generate_response(prompt)
+        return [factor.strip() for factor in response.split('\n') if factor.strip()]
+        
+    def _analyze_risk_factors(self, business_profile: BusinessProfile) -> List[str]:
+        """Analyze risk factors using LLM."""
+        prompt = f"""
+        Analyze the following business profile and list 3-5 key risk factors:
+        - Industry: {business_profile.industry}
+        - Stage: {business_profile.business_stage}
+        - Revenue: ${business_profile.financial_metrics.revenue:,.2f}
+        - Growth Rate: {business_profile.financial_metrics.growth_rate}
+        - Market Size: ${business_profile.market_metrics.total_market_size:,.2f}
+        """
+        
+        response = self.llm.generate_response(prompt)
+        return [risk.strip() for risk in response.split('\n') if risk.strip()]
