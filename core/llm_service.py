@@ -1,7 +1,8 @@
-from typing import Optional, List, Dict, Any
-import json
-import time
-from datetime import datetime
+from typing import Dict, Any, List, Optional
+import os
+from groq import Groq
+from models.assessment import Question, Answer
+from models.business_profile import BusinessProfile
 
 class LLMService:
     _instance = None
@@ -13,236 +14,273 @@ class LLMService:
         return cls._instance
     
     def __init__(self):
-        if self._initialized:
-            return
-            
-        # Directly initialize with API key
-        self.api_key = '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'
-        self.use_mock = False  # We have an API key, so no need for mock mode
-        
-        try:
-            from groq import Groq
+        if not self._initialized:
             self.client = Groq(
-                api_key=self.api_key,
-                timeout=60.0
+                api_key=os.getenv('GROQ_API_KEY', 'default_key')
             )
-            self.model = "llama2-70b-4096"
-        except Exception as e:
-            print(f"Warning: Failed to initialize Groq client ({str(e)}). Falling back to mock mode.")
-            self.use_mock = True
-        
-        self._initialized = True
-        
-    def _retry_with_exponential_backoff(self, func, max_retries=3, initial_delay=1):
-        """Helper function to implement retry logic with exponential backoff."""
-        for attempt in range(max_retries):
-            try:
-                return func()
-            except Exception as e:
-                if attempt == max_retries - 1:  # Last attempt
-                    raise e
-                
-                delay = initial_delay * (2 ** attempt)
-                print(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
-                time.sleep(delay)
-        
-    def generate_response(
+            self._initialized = True
+
+    def select_next_question(
         self,
-        prompt: str,
-        temperature: float = 0.7,
-        max_tokens: int = 8000
-    ) -> str:
-        """Generate a response using either Groq API or mock responses."""
-        if self.use_mock:
-            return self._generate_mock_response(prompt)
-            
-        def _generate():
-            try:
-                completion = self.client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a helpful business analysis assistant. Provide clear, concise, and accurate responses."
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    model=self.model,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-                
-                return completion.choices[0].message.content.strip()
-                
-            except Exception as e:
-                print(f"Error generating response: {str(e)}")
-                return self._generate_mock_response(prompt)
-        
-        return self._retry_with_exponential_backoff(_generate)
-    
-    def _generate_mock_response(self, prompt: str) -> str:
-        """Generate mock responses for development/testing."""
-        if "business profile" in prompt.lower():
-            return json.dumps({
-                "strengths": [
-                    "Strong market position",
-                    "Healthy revenue growth",
-                    "Experienced management team"
-                ],
-                "weaknesses": [
-                    "Limited international presence",
-                    "High customer acquisition costs"
-                ],
-                "opportunities": [
-                    "Market expansion potential",
-                    "New product development",
-                    "Strategic partnerships"
-                ],
-                "risks": [
-                    "Increasing competition",
-                    "Regulatory changes",
-                    "Market volatility"
-                ],
-                "recommendations": [
-                    "Focus on core market expansion",
-                    "Invest in technology infrastructure",
-                    "Develop strategic partnerships"
-                ]
-            })
-        elif "follow-up questions" in prompt.lower():
-            return "\n".join([
-                "What are your main competitive advantages?",
-                "How do you plan to scale operations?",
-                "What are your key growth metrics?"
-            ])
-        elif "validate" in prompt.lower():
-            return json.dumps({
-                "is_valid": True,
-                "missing_elements": [],
-                "suggestions": ["Consider adding more quantitative metrics"],
-                "confidence_score": 0.85
-            })
-        else:
-            return "This is a mock response for development purposes."
-            
-    def analyze_business_profile(
-        self,
-        profile_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Analyze a business profile and extract key insights."""
-        prompt = f"""
-        Analyze the following business profile and provide key insights:
-        
-        Business Name: {profile_data.get('business_name')}
-        Industry: {profile_data.get('industry')}
-        Stage: {profile_data.get('business_stage')}
-        Revenue: ${profile_data.get('revenue', 0):,.2f}
-        Growth Rate: {profile_data.get('growth_rate', 'N/A')}
-        
-        Provide analysis in the following JSON format:
-        {{
-            "strengths": ["strength1", "strength2", ...],
-            "weaknesses": ["weakness1", "weakness2", ...],
-            "opportunities": ["opportunity1", "opportunity2", ...],
-            "risks": ["risk1", "risk2", ...],
-            "recommendations": ["recommendation1", "recommendation2", ...]
-        }}
-        """
-        
-        response = self.generate_response(prompt)
+        available_questions: List[Question],
+        context: Dict[str, Any]
+    ) -> Optional[Question]:
+        """Select the most relevant next question based on context."""
         try:
-            if isinstance(response, str):
-                return json.loads(response)
-            return response
+            if not available_questions:
+                return None
+                
+            # Prepare prompt for question selection
+            prompt = self._create_question_selection_prompt(available_questions, context)
+            
+            # Get response from Groq
+            response = self.client.chat.completions.create(
+                model="mixtral-8x7b-32768",
+                messages=[
+                    {"role": "system", "content": "You are an expert business analyst helping to select the most relevant question for a business assessment."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=150
+            )
+            
+            # Parse response to get question ID
+            selected_id = response.choices[0].message.content.strip()
+            
+            # Find and return the selected question
+            for question in available_questions:
+                if question.id == selected_id:
+                    return question
+                    
+            return available_questions[0]  # Fallback to first question if parsing fails
+            
+        except Exception as e:
+            print(f"Error selecting next question: {str(e)}")
+            return available_questions[0] if available_questions else None
+
+    def analyze_answer(
+        self,
+        answer: Answer,
+        business_profile: BusinessProfile,
+        current_phase: str
+    ) -> Dict[str, Any]:
+        """Analyze an answer for insights, red flags, and opportunities."""
+        try:
+            # Prepare prompt for answer analysis
+            prompt = self._create_answer_analysis_prompt(answer, business_profile, current_phase)
+            
+            # Get response from Groq
+            response = self.client.chat.completions.create(
+                model="mixtral-8x7b-32768",
+                messages=[
+                    {"role": "system", "content": "You are an expert business analyst analyzing responses from a business assessment."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,
+                max_tokens=500
+            )
+            
+            # Parse and structure the response
+            analysis = self._parse_analysis_response(response.choices[0].message.content)
+            
+            return analysis
+            
+        except Exception as e:
+            print(f"Error analyzing answer: {str(e)}")
+            return {
+                "red_flags": [],
+                "opportunities": [],
+                "insights": [],
+                "confidence_score": 0.5
+            }
+
+    def generate_assessment_summary(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a comprehensive assessment summary."""
+        try:
+            # Prepare prompt for summary generation
+            prompt = self._create_summary_prompt(context)
+            
+            # Get response from Groq
+            response = self.client.chat.completions.create(
+                model="mixtral-8x7b-32768",
+                messages=[
+                    {"role": "system", "content": "You are an expert business analyst generating a comprehensive business assessment summary."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,
+                max_tokens=1000
+            )
+            
+            # Parse and structure the response
+            summary = self._parse_summary_response(response.choices[0].message.content)
+            
+            return summary
+            
+        except Exception as e:
+            print(f"Error generating assessment summary: {str(e)}")
+            return {
+                "scores": {},
+                "recommendations": [],
+                "risks": [],
+                "opportunities": [],
+                "key_findings": []
+            }
+
+    def _create_question_selection_prompt(
+        self,
+        available_questions: List[Question],
+        context: Dict[str, Any]
+    ) -> str:
+        """Create prompt for question selection."""
+        prompt_parts = [
+            "Based on the following context and available questions, select the most relevant question ID.",
+            "\nContext:",
+            f"Business Stage: {context['business_profile'].get('business_stage', 'Unknown')}",
+            f"Current Phase: {context['current_phase']}",
+            f"Previous Answers: {len(context['previous_answers'])}",
+            "\nAvailable Questions:"
+        ]
+        
+        for q in available_questions:
+            prompt_parts.append(f"ID: {q.id} - {q.text}")
+            
+        prompt_parts.append("\nReturn only the question ID of the most relevant question.")
+        
+        return "\n".join(prompt_parts)
+
+    def _create_answer_analysis_prompt(
+        self,
+        answer: Answer,
+        business_profile: BusinessProfile,
+        current_phase: str
+    ) -> str:
+        """Create prompt for answer analysis."""
+        return f"""
+        Analyze the following business assessment response:
+        
+        Question: {answer.question.text}
+        Answer: {answer.text}
+        
+        Business Context:
+        - Stage: {business_profile.business_stage}
+        - Industry: {business_profile.industry}
+        - Current Phase: {current_phase}
+        
+        Provide analysis in the following format:
+        - Red Flags: (list any concerning aspects)
+        - Opportunities: (list potential opportunities)
+        - Insights: (list key insights)
+        - Confidence Score: (0.0-1.0)
+        """
+
+    def _create_summary_prompt(self, context: Dict[str, Any]) -> str:
+        """Create prompt for assessment summary."""
+        return f"""
+        Generate a comprehensive business assessment summary based on the following:
+        
+        Business Profile:
+        {context['business_profile']}
+        
+        Assessment Responses:
+        {context['answers']}
+        
+        Identified Red Flags:
+        {context['red_flags']}
+        
+        Identified Opportunities:
+        {context['opportunities']}
+        
+        Provide summary in the following format:
+        - Scores: (category scores from 0-100)
+        - Recommendations: (prioritized list)
+        - Risks: (key risks identified)
+        - Opportunities: (key opportunities identified)
+        - Key Findings: (main insights)
+        """
+
+    def _parse_analysis_response(self, response: str) -> Dict[str, Any]:
+        """Parse and structure the analysis response."""
+        try:
+            lines = response.strip().split('\n')
+            result = {
+                "red_flags": [],
+                "opportunities": [],
+                "insights": [],
+                "confidence_score": 0.5
+            }
+            
+            current_section = None
+            for line in lines:
+                line = line.strip()
+                if line.startswith('- Red Flags:'):
+                    current_section = "red_flags"
+                elif line.startswith('- Opportunities:'):
+                    current_section = "opportunities"
+                elif line.startswith('- Insights:'):
+                    current_section = "insights"
+                elif line.startswith('- Confidence Score:'):
+                    try:
+                        score = float(line.split(':')[1].strip())
+                        result["confidence_score"] = min(1.0, max(0.0, score))
+                    except:
+                        pass
+                elif line.startswith('- ') and current_section:
+                    result[current_section].append(line[2:])
+                    
+            return result
+            
         except Exception as e:
             print(f"Error parsing analysis response: {str(e)}")
             return {
-                "strengths": [],
-                "weaknesses": [],
+                "red_flags": [],
                 "opportunities": [],
-                "risks": [],
-                "recommendations": []
+                "insights": [],
+                "confidence_score": 0.5
             }
-            
-    def generate_follow_up_questions(
-        self,
-        context: Dict[str, Any],
-        previous_answers: List[Dict[str, Any]],
-        max_questions: int = 3
-    ) -> List[str]:
-        """Generate relevant follow-up questions based on context and previous answers."""
-        prompt = f"""
-        Given the following context and previous answers, generate {max_questions} relevant follow-up questions:
-        
-        Context:
-        - Industry: {context.get('industry')}
-        - Business Stage: {context.get('business_stage')}
-        - Current Focus: {context.get('current_focus')}
-        
-        Previous Answers:
-        {self._format_previous_answers(previous_answers)}
-        
-        Generate {max_questions} specific, probing questions that will help gather more insights.
-        Return each question on a new line.
-        """
-        
-        response = self.generate_response(prompt)
-        return [q.strip() for q in response.split('\n') if q.strip()]
-        
-    def validate_response(
-        self,
-        response: str,
-        criteria: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Validate a response against given criteria."""
-        prompt = f"""
-        Validate the following response against the given criteria:
-        
-        Response:
-        {response}
-        
-        Criteria:
-        {self._format_criteria(criteria)}
-        
-        Return validation results in the following JSON format:
-        {{
-            "is_valid": true/false,
-            "missing_elements": ["element1", "element2", ...],
-            "suggestions": ["suggestion1", "suggestion2", ...],
-            "confidence_score": 0.0-1.0
-        }}
-        """
-        
-        validation_response = self.generate_response(prompt)
+
+    def _parse_summary_response(self, response: str) -> Dict[str, Any]:
+        """Parse and structure the summary response."""
         try:
-            if isinstance(validation_response, str):
-                return json.loads(validation_response)
-            return validation_response
-        except Exception as e:
-            print(f"Error parsing validation response: {str(e)}")
-            return {
-                "is_valid": False,
-                "missing_elements": [],
-                "suggestions": ["Error processing validation"],
-                "confidence_score": 0.0
+            lines = response.strip().split('\n')
+            result = {
+                "scores": {},
+                "recommendations": [],
+                "risks": [],
+                "opportunities": [],
+                "key_findings": []
             }
             
-    def _format_previous_answers(
-        self,
-        previous_answers: List[Dict[str, Any]]
-    ) -> str:
-        """Format previous answers for prompt context."""
-        formatted = []
-        for i, answer in enumerate(previous_answers[-3:], 1):  # Only use last 3 answers
-            formatted.append(f"Q{i}: {answer.get('question', 'N/A')}")
-            formatted.append(f"A{i}: {answer.get('answer', 'N/A')}\n")
-        return "\n".join(formatted)
-        
-    def _format_criteria(self, criteria: Dict[str, Any]) -> str:
-        """Format validation criteria for prompt."""
-        formatted = []
-        for key, value in criteria.items():
-            formatted.append(f"- {key}: {value}")
-        return "\n".join(formatted)
+            current_section = None
+            for line in lines:
+                line = line.strip()
+                if line.startswith('- Scores:'):
+                    current_section = "scores"
+                elif line.startswith('- Recommendations:'):
+                    current_section = "recommendations"
+                elif line.startswith('- Risks:'):
+                    current_section = "risks"
+                elif line.startswith('- Opportunities:'):
+                    current_section = "opportunities"
+                elif line.startswith('- Key Findings:'):
+                    current_section = "key_findings"
+                elif line.startswith('- ') and current_section:
+                    if current_section == "scores":
+                        try:
+                            category, score = line[2:].split(':')
+                            result["scores"][category.strip()] = float(score.strip())
+                        except:
+                            pass
+                    else:
+                        result[current_section].append(line[2:])
+                    
+            return result
+            
+        except Exception as e:
+            print(f"Error parsing summary response: {str(e)}")
+            return {
+                "scores": {},
+                "recommendations": [],
+                "risks": [],
+                "opportunities": [],
+                "key_findings": []
+            }
