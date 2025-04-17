@@ -50,7 +50,7 @@ class LLMService:
         self,
         prompt: str,
         temperature: float = 0.7,
-        max_tokens: int = 1000
+        max_tokens: int = 8000
     ) -> str:
         """Generate a response using either Groq API or mock responses."""
         if self.use_mock:
