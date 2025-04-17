@@ -1,15 +1,180 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
+import json
+
 from models.assessment import Question, Answer, AssessmentSession, AssessmentResult
 from models.business_profile import BusinessProfile
 from core.database import DatabaseConnection
 from core.llm_service import LLMService
-from core.config import BusinessStage, FUNCTIONAL_AREAS
 
 class AssessmentService:
     def __init__(self):
         self.db = DatabaseConnection()
         self.llm = LLMService()
+        self.interview_phases = {
+            "initial_discovery": {
+                "name": "Initial Discovery",
+                "questions": [
+                    {
+                        "_id": "id_1",
+                        "text": "Tell me about your business and what problem you're solving.",
+                        "category": "Overview"
+                    },
+                    {
+                        "_id": "id_2",
+                        "text": "How long have you been operating and what's your current stage?",
+                        "category": "Business Stage"
+                    },
+                    {
+                        "_id": "id_3",
+                        "text": "What industry are you in and who are your target customers?",
+                        "category": "Market"
+                    },
+                    {
+                        "_id": "id_4",
+                        "text": "What's your revenue model and current traction?",
+                        "category": "Financial"
+                    }
+                ]
+            },
+            "business_model": {
+                "name": "Business Model Deep Dive",
+                "questions": {
+                    "digital_saas": [
+                        {
+                            "_id": "saas_1",
+                            "text": "What's your monthly recurring revenue and growth rate?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "saas_2",
+                            "text": "What's your customer acquisition cost compared to lifetime value?",
+                            "category": "Metrics"
+                        },
+                        {
+                            "_id": "saas_3",
+                            "text": "What's your churn rate and retention strategy?",
+                            "category": "Operations"
+                        }
+                    ],
+                    "physical_product": [
+                        {
+                            "_id": "product_1",
+                            "text": "What are your production costs and gross margins?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "product_2",
+                            "text": "How do you manage your supply chain and inventory?",
+                            "category": "Operations"
+                        },
+                        {
+                            "_id": "product_3",
+                            "text": "What are your distribution channels and retail strategy?",
+                            "category": "Strategy"
+                        }
+                    ],
+                    "service": [
+                        {
+                            "_id": "service_1",
+                            "text": "How do you scale your service delivery beyond your personal time?",
+                            "category": "Operations"
+                        },
+                        {
+                            "_id": "service_2",
+                            "text": "What's your hourly/project rate structure and utilization rate?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "service_3",
+                            "text": "How do you maintain quality as you expand your team?",
+                            "category": "Operations"
+                        }
+                    ]
+                }
+            },
+            "market_analysis": {
+                "name": "Market & Competition Analysis",
+                "questions": [
+                    {
+                        "_id": "market_1",
+                        "text": "What's your total addressable market size and how did you calculate it?",
+                        "category": "Market"
+                    },
+                    {
+                        "_id": "market_2",
+                        "text": "Who are your top 3 competitors and how do you differentiate?",
+                        "category": "Competition"
+                    },
+                    {
+                        "_id": "market_3",
+                        "text": "What barriers to entry exist in your market?",
+                        "category": "Strategy"
+                    },
+                    {
+                        "_id": "market_4",
+                        "text": "What market trends are impacting your growth potential?",
+                        "category": "Market"
+                    }
+                ]
+            },
+            "financial_performance": {
+                "name": "Financial Performance",
+                "questions": {
+                    "pre_revenue": [
+                        {
+                            "_id": "pre_fin_1",
+                            "text": "What's your burn rate and runway?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "pre_fin_2",
+                            "text": "What are your financial projections for the next 24 months?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "pre_fin_3",
+                            "text": "What assumptions underlie your revenue forecasts?",
+                            "category": "Financial"
+                        }
+                    ],
+                    "revenue_generating": [
+                        {
+                            "_id": "rev_fin_1",
+                            "text": "What has your year-over-year revenue growth been?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "rev_fin_2",
+                            "text": "Break down your cost structure between fixed and variable costs.",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "rev_fin_3",
+                            "text": "What's your path to profitability and timeline?",
+                            "category": "Financial"
+                        }
+                    ],
+                    "profitable": [
+                        {
+                            "_id": "prof_fin_1",
+                            "text": "What's your EBITDA and how has it evolved over time?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "prof_fin_2",
+                            "text": "What's your cash conversion cycle?",
+                            "category": "Financial"
+                        },
+                        {
+                            "_id": "prof_fin_3",
+                            "text": "How do you reinvest profits back into the business?",
+                            "category": "Strategy"
+                        }
+                    ]
+                }
+            }
+        }
 
     def start_assessment(
         self,
@@ -33,23 +198,25 @@ class AssessmentService:
         session: AssessmentSession,
         previous_answers: List[Dict[str, Any]] = None
     ) -> Optional[Question]:
-        """Get the next relevant question based on previous answers."""
+        """Get the next relevant question based on previous answers and business context."""
         if previous_answers is None:
             previous_answers = []
 
-        # Get base questions for business stage
-        stage_questions = self.db.get_questions_for_stage(session.business_stage)
+        # Determine current phase based on answers
+        current_phase = self._determine_current_phase(session, previous_answers)
+        
+        # Get questions for current phase
+        phase_questions = self._get_phase_questions(current_phase, session, previous_answers)
         
         # Filter out already answered questions
         answered_ids = {qa["question_id"] for qa in previous_answers}
-        available_questions = [q for q in stage_questions if q["_id"] not in answered_ids]
+        available_questions = [q for q in phase_questions if q["_id"] not in answered_ids]
         
         if not available_questions:
             return None
-            
+
         # Use LLM to select most relevant question
-        context = self._build_question_context(session, previous_answers)
-        selected_question = self._select_next_question(available_questions, context)
+        selected_question = self._select_next_question(available_questions, session, previous_answers)
         
         return Question(
             id=selected_question["_id"],
@@ -65,8 +232,18 @@ class AssessmentService:
         answer_text: str
     ) -> Answer:
         """Process and analyze a user's answer."""
-        # Extract structured data from answer using LLM
+        # Extract structured data using LLM
         structured_data = self._extract_answer_data(question, answer_text)
+        
+        # Check for red flags
+        red_flags = self._check_red_flags(question, answer_text, structured_data)
+        if red_flags:
+            structured_data["red_flags"] = red_flags
+        
+        # Check for opportunity signals
+        opportunities = self._check_opportunities(question, answer_text, structured_data)
+        if opportunities:
+            structured_data["opportunities"] = opportunities
         
         # Create answer object
         answer = Answer(
@@ -78,274 +255,185 @@ class AssessmentService:
         )
         
         # Update session progress
-        total_questions = len(self.db.get_questions_for_stage(session.business_stage))
+        total_questions = self._get_total_questions_estimate(session)
         session.questions_answers.append({"question_id": question.id, "answer": answer})
         session.completion_status = len(session.questions_answers) / total_questions
         
         return answer
 
-    def generate_assessment_result(
-        self,
-        session: AssessmentSession
-    ) -> AssessmentResult:
-        """Generate final assessment results and recommendations."""
-        # Analyze answers and calculate scores
-        scores = self._calculate_category_scores(session.questions_answers)
-        
-        # Generate recommendations using LLM
-        recommendations = self._generate_recommendations(
-            session.business_stage,
-            session.industry,
-            scores,
-            session.questions_answers
-        )
-        
-        # Identify opportunities and risks
-        opportunities = self._identify_opportunities(session.questions_answers)
-        risk_factors = self._identify_risks(session.questions_answers)
-        
-        return AssessmentResult(
-            business_name=session.business_name,
-            completion_date=datetime.now(),
-            scores=scores,
-            recommendations=recommendations,
-            opportunities=opportunities,
-            risk_factors=risk_factors
-        )
-
-    def _build_question_context(
+    def _determine_current_phase(
         self,
         session: AssessmentSession,
         previous_answers: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Build context for question selection."""
-        return {
-            "business_stage": session.business_stage,
-            "industry": session.industry,
-            "previous_answers": previous_answers,
-            "completion_status": session.completion_status
-        }
+    ) -> str:
+        """Determine which interview phase to proceed with."""
+        if not previous_answers:
+            return "initial_discovery"
+            
+        num_answers = len(previous_answers)
+        
+        if num_answers < 4:
+            return "initial_discovery"
+        elif num_answers < 8:
+            return "business_model"
+        elif num_answers < 12:
+            return "market_analysis"
+        else:
+            return "financial_performance"
 
-    def _select_next_question(
+    def _get_phase_questions(
         self,
-        available_questions: List[Dict[str, Any]],
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Select the most relevant next question using LLM."""
+        phase: str,
+        session: AssessmentSession,
+        previous_answers: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Get questions for the current phase."""
+        phase_data = self.interview_phases.get(phase, {})
+        
+        if phase == "business_model":
+            # Determine business type from previous answers
+            business_type = self._determine_business_type(previous_answers)
+            return phase_data.get("questions", {}).get(business_type, [])
+            
+        elif phase == "financial_performance":
+            # Determine financial stage
+            financial_stage = self._determine_financial_stage(previous_answers)
+            return phase_data.get("questions", {}).get(financial_stage, [])
+            
+        return phase_data.get("questions", [])
+
+    def _determine_business_type(
+        self,
+        previous_answers: List[Dict[str, Any]]
+    ) -> str:
+        """Determine the type of business from previous answers."""
+        # Use LLM to analyze previous answers and categorize the business
+        context = self._summarize_previous_answers(previous_answers)
+        
         prompt = f"""
-        Given the following context and available questions, select the most relevant question to ask next:
-        
+        Based on the following business context, determine if this is primarily a:
+        1. Digital/SaaS business
+        2. Physical product business
+        3. Service business
+
         Context:
-        - Business Stage: {context['business_stage']}
-        - Industry: {context['industry']}
-        - Progress: {context['completion_status']:.0%} complete
-        
-        Previous answers summary:
-        {self._summarize_previous_answers(context['previous_answers'])}
-        
-        Available questions:
-        {self._format_questions_for_prompt(available_questions)}
-        
-        Return the ID of the most relevant question to ask next.
+        {context}
+
+        Return only one of: "digital_saas", "physical_product", or "service"
         """
         
         response = self.llm.generate_response(prompt)
-        question_id = response.strip()
-        
-        return next(q for q in available_questions if str(q["_id"]) == question_id)
+        return response.strip().lower()
 
-    def _extract_answer_data(
+    def _determine_financial_stage(
+        self,
+        previous_answers: List[Dict[str, Any]]
+    ) -> str:
+        """Determine the financial stage of the business."""
+        # Use LLM to analyze previous answers and determine financial stage
+        context = self._summarize_previous_answers(previous_answers)
+        
+        prompt = f"""
+        Based on the following business context, determine if this is a:
+        1. Pre-revenue company
+        2. Revenue-generating but not profitable
+        3. Profitable company
+
+        Context:
+        {context}
+
+        Return only one of: "pre_revenue", "revenue_generating", or "profitable"
+        """
+        
+        response = self.llm.generate_response(prompt)
+        return response.strip().lower()
+
+    def _check_red_flags(
         self,
         question: Question,
-        answer_text: str
-    ) -> Dict[str, Any]:
-        """Extract structured data from answer text using LLM."""
+        answer_text: str,
+        structured_data: Dict[str, Any]
+    ) -> List[str]:
+        """Check for red flags in the answer."""
         prompt = f"""
-        Extract key information from the following answer to: "{question.text}"
-        
+        Analyze this answer for potential red flags from an investor's perspective.
+        Look for issues like:
+        - Inconsistent financial numbers
+        - Unrealistic market size claims
+        - Vague answers about competition
+        - Excessive founder salaries
+        - Unreasonable valuation expectations
+
+        Question: {question.text}
         Answer: {answer_text}
-        
-        Return a JSON object with the following structure:
-        {{
-            "key_points": ["point1", "point2", ...],
-            "sentiment": "positive/negative/neutral",
-            "confidence": 0.0-1.0,
-            "category_specific_data": {{}}
-        }}
+        Structured Data: {json.dumps(structured_data)}
+
+        Return a list of specific red flags, or an empty list if none found.
         """
         
         response = self.llm.generate_response(prompt)
-        return eval(response)  # Note: In production, use proper JSON parsing
+        try:
+            return json.loads(response)
+        except:
+            return []
 
-    def _calculate_answer_confidence(self, answer_text: str) -> float:
-        """Calculate confidence score for an answer."""
-        # Simple heuristic based on answer length and detail
-        words = answer_text.split()
-        base_score = min(len(words) / 100.0, 0.8)  # Cap at 0.8
-        
-        # Add bonus for specific details
-        detail_indicators = ['because', 'specifically', 'for example', 'such as']
-        detail_bonus = sum(0.05 for indicator in detail_indicators if indicator in answer_text.lower())
-        
-        return min(base_score + detail_bonus, 1.0)
-
-    def _calculate_category_scores(
+    def _check_opportunities(
         self,
-        questions_answers: List[Dict[str, Any]]
-    ) -> Dict[str, float]:
-        """Calculate scores for each assessment category."""
-        category_scores = {area: 0.0 for area in FUNCTIONAL_AREAS}
-        category_counts = {area: 0 for area in FUNCTIONAL_AREAS}
-        
-        for qa in questions_answers:
-            answer = qa["answer"]
-            question = self.db.get_question_by_id(qa["question_id"])
-            
-            if question["category"] in category_scores:
-                score = answer.confidence_score * self._calculate_answer_quality(answer)
-                category_scores[question["category"]] += score
-                category_counts[question["category"]] += 1
-        
-        # Calculate averages
-        for category in category_scores:
-            if category_counts[category] > 0:
-                category_scores[category] /= category_counts[category]
-        
-        return category_scores
-
-    def _calculate_answer_quality(self, answer: Answer) -> float:
-        """Calculate the quality score of an answer."""
-        # Base score from structured data
-        if not answer.structured_data:
-            return 0.5
-            
-        base_score = 0.6
-        
-        # Add points for comprehensive responses
-        if len(answer.structured_data.get("key_points", [])) >= 3:
-            base_score += 0.2
-            
-        # Add points for positive sentiment
-        if answer.structured_data.get("sentiment") == "positive":
-            base_score += 0.1
-            
-        # Add points for high confidence
-        if answer.structured_data.get("confidence", 0) > 0.8:
-            base_score += 0.1
-            
-        return min(base_score, 1.0)
-
-    def _generate_recommendations(
-        self,
-        business_stage: str,
-        industry: str,
-        scores: Dict[str, float],
-        questions_answers: List[Dict[str, Any]]
+        question: Question,
+        answer_text: str,
+        structured_data: Dict[str, Any]
     ) -> List[str]:
-        """Generate recommendations based on assessment results."""
-        context = f"""
-        Business Stage: {business_stage}
-        Industry: {industry}
-        
-        Category Scores:
-        {self._format_scores_for_prompt(scores)}
-        
-        Key Findings:
-        {self._summarize_answers(questions_answers)}
-        
-        Generate 3-5 specific, actionable recommendations based on the assessment results.
-        """
-        
-        response = self.llm.generate_response(context)
-        return [rec.strip() for rec in response.split('\n') if rec.strip()]
-
-    def _identify_opportunities(
-        self,
-        questions_answers: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Identify business opportunities from assessment answers."""
-        context = self._summarize_answers(questions_answers)
-        
+        """Check for opportunity signals in the answer."""
         prompt = f"""
-        Based on the following assessment summary, identify 3-4 key business opportunities:
-        
-        {context}
-        
-        Return each opportunity on a new line.
-        """
-        
-        response = self.llm.generate_response(prompt)
-        return [opp.strip() for opp in response.split('\n') if opp.strip()]
+        Analyze this answer for positive opportunity signals from an investor's perspective.
+        Look for indicators like:
+        - Unusually high margins for the industry
+        - Proprietary technology or IP
+        - Evidence of product-market fit
+        - Strong team with relevant experience
+        - Clear customer acquisition strategy with proven ROI
 
-    def _identify_risks(
-        self,
-        questions_answers: List[Dict[str, Any]]
-    ) -> List[str]:
-        """Identify potential risks from assessment answers."""
-        context = self._summarize_answers(questions_answers)
-        
-        prompt = f"""
-        Based on the following assessment summary, identify 3-4 key business risks:
-        
-        {context}
-        
-        Return each risk on a new line.
+        Question: {question.text}
+        Answer: {answer_text}
+        Structured Data: {json.dumps(structured_data)}
+
+        Return a list of specific opportunities, or an empty list if none found.
         """
         
         response = self.llm.generate_response(prompt)
-        return [risk.strip() for risk in response.split('\n') if risk.strip()]
+        try:
+            return json.loads(response)
+        except:
+            return []
+
+    def _get_total_questions_estimate(self, session: AssessmentSession) -> int:
+        """Estimate total number of questions for the assessment."""
+        # Base questions from each phase
+        total = (
+            len(self.interview_phases["initial_discovery"]["questions"]) +
+            len(self.interview_phases["market_analysis"]["questions"])
+        )
+        
+        # Add business model questions (assume average)
+        business_model_questions = self.interview_phases["business_model"]["questions"]
+        avg_business_model = sum(len(q) for q in business_model_questions.values()) // len(business_model_questions)
+        total += avg_business_model
+        
+        # Add financial questions (assume average)
+        financial_questions = self.interview_phases["financial_performance"]["questions"]
+        avg_financial = sum(len(q) for q in financial_questions.values()) // len(financial_questions)
+        total += avg_financial
+        
+        return total
 
     def _summarize_previous_answers(
         self,
         previous_answers: List[Dict[str, Any]]
     ) -> str:
         """Create a summary of previous answers for context."""
-        if not previous_answers:
-            return "No previous answers."
-            
         summary = []
-        for qa in previous_answers[-3:]:  # Only use last 3 answers for context
+        for qa in previous_answers:
             question = self.db.get_question_by_id(qa["question_id"])
             answer = qa["answer"]
-            summary.append(f"Q: {question['text']}\nA: {answer.text[:100]}...")
-            
-        return "\n\n".join(summary)
-
-    def _format_questions_for_prompt(
-        self,
-        questions: List[Dict[str, Any]]
-    ) -> str:
-        """Format questions for LLM prompt."""
-        return "\n".join(
-            f"ID: {q['_id']}\nCategory: {q['category']}\nQuestion: {q['text']}"
-            for q in questions
-        )
-
-    def _format_scores_for_prompt(
-        self,
-        scores: Dict[str, float]
-    ) -> str:
-        """Format category scores for LLM prompt."""
-        return "\n".join(
-            f"{category}: {score:.1%}"
-            for category, score in scores.items()
-        )
-
-    def _summarize_answers(
-        self,
-        questions_answers: List[Dict[str, Any]]
-    ) -> str:
-        """Create a summary of all answers for analysis."""
-        summary = []
-        for qa in questions_answers:
-            question = self.db.get_question_by_id(qa["question_id"])
-            answer = qa["answer"]
-            key_points = answer.structured_data.get("key_points", [])
-            
-            summary.append(
-                f"Topic: {question['category']}\n"
-                f"Key Points: {', '.join(key_points)}\n"
-                f"Sentiment: {answer.structured_data.get('sentiment', 'neutral')}"
-            )
-            
+            summary.append(f"Q: {question['text']}\nA: {answer.text}")
         return "\n\n".join(summary)
