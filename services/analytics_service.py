@@ -11,6 +11,61 @@ class AnalyticsService:
         self.db = DatabaseConnection()
         self.llm = LLMService()
 
+    def get_industry_metrics(self, industry: str) -> Dict[str, Any]:
+        """Get industry-specific metrics and benchmarks."""
+        try:
+            # Default metrics in case of database errors
+            default_metrics = {
+                'revenue_multiple': 3.0,
+                'ebitda_multiple': 8.0,
+                'avg_growth_rate': 0.15,
+                'avg_profit_margin': 0.12,
+                'avg_ebitda_margin': 0.18,
+                'avg_market_share': 0.05,
+                'avg_revenue': 1_000_000,
+                'median_deal_size': 5_000_000,
+                'avg_valuation_multiple': 4.0,
+                'avg_competitor_count': 5
+            }
+
+            # Get metrics from database
+            pipeline = [
+                {"$match": {"industry": industry}},
+                {
+                    "$group": {
+                        "_id": None,
+                        "revenue_multiple": {"$avg": "$revenue_multiple"},
+                        "ebitda_multiple": {"$avg": "$ebitda_multiple"},
+                        "avg_growth_rate": {"$avg": "$growth_rate"},
+                        "avg_profit_margin": {"$avg": "$profit_margin"},
+                        "avg_ebitda_margin": {"$avg": "$ebitda_margin"},
+                        "avg_market_share": {"$avg": "$market_share"},
+                        "avg_revenue": {"$avg": "$revenue"},
+                        "median_deal_size": {"$avg": "$valuation"},
+                        "avg_valuation_multiple": {"$avg": "$valuation_multiple"},
+                        "avg_competitor_count": {"$avg": {"$size": "$competitors"}}
+                    }
+                }
+            ]
+
+            results = list(self.db.businesses.aggregate(pipeline))
+            
+            if results:
+                metrics = results[0]
+                # Remove MongoDB _id field
+                metrics.pop('_id', None)
+                # Fill in any missing metrics with defaults
+                for key, value in default_metrics.items():
+                    if key not in metrics or metrics[key] is None:
+                        metrics[key] = value
+                return metrics
+            
+            return default_metrics
+
+        except Exception as e:
+            print(f"Error fetching industry metrics: {str(e)}")
+            return default_metrics
+
     def analyze_business_trends(
         self,
         industry: str,
@@ -54,7 +109,11 @@ class AnalyticsService:
             {"$sort": {"_id.year": 1, "_id.month": 1}}
         ]
 
-        results = list(self.db.businesses.aggregate(pipeline))
+        try:
+            results = list(self.db.businesses.aggregate(pipeline))
+        except Exception as e:
+            print(f"Error fetching business trends: {str(e)}")
+            results = []
         
         # Process results into time series
         timeline = []
@@ -114,7 +173,11 @@ class AnalyticsService:
             {"$limit": limit}
         ]
         
-        return list(self.db.businesses.aggregate(pipeline))
+        try:
+            return list(self.db.businesses.aggregate(pipeline))
+        except Exception as e:
+            print(f"Error fetching comparable businesses: {str(e)}")
+            return []
 
     def generate_performance_metrics(
         self,
@@ -122,7 +185,7 @@ class AnalyticsService:
     ) -> Dict[str, Any]:
         """Generate comprehensive performance metrics and benchmarks."""
         # Get industry benchmarks
-        benchmarks = self._get_industry_benchmarks(business_profile.industry)
+        benchmarks = self.get_industry_metrics(business_profile.industry)
         
         # Calculate financial metrics
         financial_metrics = self._calculate_financial_metrics(
@@ -191,25 +254,6 @@ class AnalyticsService:
             return "10M-50M"
         else:
             return "50M+"
-
-    def _get_industry_benchmarks(self, industry: str) -> Dict[str, Any]:
-        """Retrieve industry benchmarks from database."""
-        pipeline = [
-            {"$match": {"industry": industry}},
-            {
-                "$group": {
-                    "_id": None,
-                    "avg_revenue": {"$avg": "$revenue"},
-                    "avg_profit_margin": {"$avg": "$profit_margin"},
-                    "avg_growth_rate": {"$avg": "$growth_rate"},
-                    "avg_valuation_multiple": {"$avg": "$valuation_multiple"},
-                    "median_deal_size": {"$median": "$valuation"}
-                }
-            }
-        ]
-        
-        result = list(self.db.businesses.aggregate(pipeline))
-        return result[0] if result else {}
 
     def _calculate_financial_metrics(
         self,
@@ -337,20 +381,24 @@ class AnalyticsService:
         industry: str
     ) -> float:
         """Calculate percentile rank for a metric within the industry."""
-        pipeline = [
-            {"$match": {"industry": industry}},
-            {"$sort": {metric: 1}},
-            {
-                "$group": {
-                    "_id": None,
-                    "values": {"$push": f"${metric}"}
+        try:
+            pipeline = [
+                {"$match": {"industry": industry}},
+                {"$sort": {metric: 1}},
+                {
+                    "$group": {
+                        "_id": None,
+                        "values": {"$push": f"${metric}"}
+                    }
                 }
-            }
-        ]
-        
-        result = list(self.db.businesses.aggregate(pipeline))
-        if not result:
-            return 0.5
+            ]
             
-        values = result[0]["values"]
-        return np.percentile(values, value) / 100
+            result = list(self.db.businesses.aggregate(pipeline))
+            if not result:
+                return 0.5
+                
+            values = result[0]["values"]
+            return np.percentile(values, value) / 100
+        except Exception as e:
+            print(f"Error calculating percentile: {str(e)}")
+            return 0.5
