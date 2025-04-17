@@ -46,7 +46,7 @@ def render_valuation_page(llm_service):
         elif question['type'] == 'number':
             raw_answer = st.text_input("USD", key=input_key, value=str(current_value) if current_value is not None else "")
         elif question['type'] == 'industry_select':
-            industries = sorted(db['listings_collection'].distinct("business_basics.industry_category") or ["Software/SaaS", "E-commerce", "Other"])
+            industries = sorted(db['business_attributes'].distinct("Business Attributes.Business Fundamentals.Industry Classification.Primary Industry") or ["Software/SaaS", "E-commerce", "Other"])
             answer = st.selectbox("Select Industry", industries, key=input_key, index=industries.index(current_value) if current_value in industries else 0)
         elif question['type'] == 'cash_flow':
             year_cols = st.columns(5)
