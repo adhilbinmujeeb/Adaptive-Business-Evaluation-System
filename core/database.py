@@ -2,7 +2,6 @@ from typing import List, Dict, Any, Optional
 import os
 from datetime import datetime
 from pymongo import MongoClient
-from pymongo.errors import ConnectionError, OperationFailure
 
 class DatabaseConnection:
     _instance = None
@@ -24,7 +23,7 @@ class DatabaseConnection:
             # Initialize MongoDB client
             self.client = MongoClient(self.mongo_uri)
             
-            # Select database (you can change 'business_insights' to your preferred name)
+            # Select database
             self.db = self.client.business_rag
             
             # Initialize collections
@@ -37,16 +36,20 @@ class DatabaseConnection:
             
         except Exception as e:
             print(f"Error connecting to MongoDB: {str(e)}")
-            raise
+            # Initialize with empty collections for fallback
+            self.businesses = None
+            self.questions = None
             
         self._initialized = True
     
     def get_questions_for_stage(self, business_stage: str) -> List[Dict[str, Any]]:
         """Get assessment questions for a specific business stage."""
         try:
-            # Query the questions collection for the specific business stage
-            questions = list(self.questions.find({"business_stage": business_stage}))
-            return questions if questions else self._get_default_questions(business_stage)
+            if self.questions:
+                questions = list(self.questions.find({"business_stage": business_stage}))
+                if questions:
+                    return questions
+            return self._get_default_questions(business_stage)
         except Exception as e:
             print(f"Error fetching questions: {str(e)}")
             return self._get_default_questions(business_stage)
@@ -54,7 +57,16 @@ class DatabaseConnection:
     def get_question_by_id(self, question_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific question by ID."""
         try:
-            return self.questions.find_one({"_id": question_id})
+            if self.questions:
+                question = self.questions.find_one({"_id": question_id})
+                if question:
+                    return question
+            # Return from default questions if not found in DB
+            for questions in self._get_default_questions("all").values():
+                for question in questions:
+                    if question["_id"] == question_id:
+                        return question
+            return None
         except Exception as e:
             print(f"Error fetching question: {str(e)}")
             return None
@@ -68,19 +80,16 @@ class DatabaseConnection:
     ) -> List[Dict[str, Any]]:
         """Find similar businesses based on criteria."""
         try:
-            # Create revenue range bounds
+            if not self.businesses:
+                return []
+                
             min_revenue, max_revenue = self._get_revenue_range_bounds(revenue_range)
-            
-            # Build the query
             query = {
                 "industry": industry,
                 "business_stage": business_stage,
                 "revenue": {"$gte": min_revenue, "$lt": max_revenue}
             }
-            
-            # Execute the query
             return list(self.businesses.find(query).limit(limit))
-            
         except Exception as e:
             print(f"Error finding similar businesses: {str(e)}")
             return []
@@ -165,53 +174,12 @@ class DatabaseConnection:
                 }
             ]
         }
-        return default_questions.get(business_stage, [])
-
-    def initialize_collections(self):
-        """Initialize collections with default data if they're empty."""
-        try:
-            # Check if questions collection is empty
-            if self.questions.count_documents({}) == 0:
-                # Insert default questions
-                default_questions = []
-                for stage, questions in self._get_default_questions("all").items():
-                    for question in questions:
-                        default_questions.append(question)
-                
-                if default_questions:
-                    self.questions.insert_many(default_questions)
-                    print("Initialized questions collection with default data")
-            
-            # Check if businesses collection is empty
-            if self.businesses.count_documents({}) == 0:
-                # Insert some sample businesses
-                sample_businesses = [
-                    {
-                        "business_name": "Tech Innovators",
-                        "industry": "Technology",
-                        "business_stage": "Growth",
-                        "revenue": 5000000,
-                        "profit_margin": 0.15,
-                        "growth_rate": 0.25,
-                        "valuation": 20000000
-                    },
-                    {
-                        "business_name": "Digital Solutions",
-                        "industry": "Technology",
-                        "business_stage": "Startup",
-                        "revenue": 500000,
-                        "profit_margin": 0.05,
-                        "growth_rate": 0.40,
-                        "valuation": 3000000
-                    }
-                ]
-                self.businesses.insert_many(sample_businesses)
-                print("Initialized businesses collection with sample data")
-                
-        except Exception as e:
-            print(f"Error initializing collections: {str(e)}")
+        return default_questions.get(business_stage, []) if business_stage != "all" else default_questions
 
     def close(self):
         """Close the MongoDB connection."""
         if hasattr(self, 'client'):
-            self.client.close()
+            try:
+                self.client.close()
+            except Exception as e:
+                print(f"Error closing MongoDB connection: {str(e)}")
