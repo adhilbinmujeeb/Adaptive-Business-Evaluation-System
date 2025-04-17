@@ -160,7 +160,7 @@ def render_assessment_page(llm_service):
 def render_trends_page():
     st.markdown("# 📈 Industry Trends Analysis")
     db = get_database()
-    industries = sorted(db['listings_collection'].distinct("business_basics.industry_category") or ["Software/SaaS", "E-commerce", "Other"])
+    industries = sorted(db['business_attributes'].distinct("Business Attributes.Business Fundamentals.Regulatory Requirements.Compliance Status") or ["Software/SaaS", "E-commerce", "Other"])
     
     col1, col2 = st.columns(2)
     with col1:
