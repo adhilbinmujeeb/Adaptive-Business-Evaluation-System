@@ -1,121 +1,99 @@
-from utils.data_processing import safe_float
+from functools import wraps
 from core.cache import cache_result
+from core.database import get_database
+import re
 
-@cache_result(ttl_seconds=86400)
-def get_industry_pe_multiple(db_collection, industry):
-    default_multiples = {"Software/SaaS": 25.0, "E-commerce": 18.0, "Retail": 12.0}
-    return default_multiples.get(industry, 15.0)
+def parse_revenue_bracket(revenue_str):
+    """Parse revenue bracket string to a float (midpoint)."""
+    if not revenue_str or revenue_str == "not_provided":
+        return None
+    match = re.match(r"\$(\d+,\d{3})\s*-\s*\$(\d+,\d{3})", revenue_str)
+    if match:
+        low = float(match.group(1).replace(",", ""))
+        high = float(match.group(2).replace(",", ""))
+        return (low + high) / 2
+    return None
 
-@cache_result(ttl_seconds=86400)
-def get_industry_ebitda_multiple(db_collection, industry):
-    default_multiples = {"Software/SaaS": 15.0, "E-commerce": 10.0, "Manufacturing": 7.0}
-    return default_multiples.get(industry, 8.0)
+@cache_result(ttl_seconds=3600)
+def get_industry_pe_multiple(collection, industry):
+    """Fetch industry P/E multiple (placeholder)."""
+    return 15.0  # Replace with MongoDB query if data available
 
-def calculate_dcf(cash_flows, discount_rate=0.12, terminal_growth=0.02):
-    pv_cash_flows = sum(cf / ((1 + discount_rate) ** (i + 1)) for i, cf in enumerate(cash_flows))
-    last_cf = cash_flows[-1] if cash_flows else 0
-    if discount_rate > terminal_growth:
-        terminal_value = (last_cf * (1 + terminal_growth)) / (discount_rate - terminal_growth)
-        pv_terminal_value = terminal_value / ((1 + discount_rate) ** len(cash_flows))
-    else:
-        pv_terminal_value = 0
-    return pv_cash_flows + pv_terminal_value
+@cache_result(ttl_seconds=3600)
+def get_industry_ebitda_multiple(collection, industry):
+    """Fetch industry EBITDA multiple (placeholder)."""
+    return 8.0  # Replace with MongoDB query if data available
 
 def calculate_valuation(company_data):
+    """Calculate valuation using multiple methods based on available data."""
+    db = get_database()
     results = {}
-    valuation_methods_used = []
-    
-    assets = safe_float(company_data.get('assets'))
-    liabilities = safe_float(company_data.get('liabilities'))
-    earnings = safe_float(company_data.get('earnings'))
-    ebitda = safe_float(company_data.get('ebitda'))
-    revenue = safe_float(company_data.get('revenue'))
-    cash_flows = [safe_float(cf) for cf in company_data.get('cash_flows_str', "0,0,0,0,0").split(",")]
-    industry = company_data.get('industry', 'Other')
-    growth = company_data.get('growth', 'Moderate')
 
-    if assets is not None and liabilities is not None and (bv := assets - liabilities) > 0:
-        results['book_value'] = bv
-        valuation_methods_used.append("Book Value (Assets - Liabilities)")
+    # Try to fetch revenue from business_attributes if not provided
+    if not company_data.get('revenue') and company_data.get('business_id'):
+        attr = db['business_attributes'].find_one({"business_id": company_data['business_id']})
+        if attr and attr.get("Business Attributes.Financial Metrics.Revenue Brackets (Annual)"):
+            company_data['revenue'] = parse_revenue_bracket(
+                attr["Business Attributes.Financial Metrics.Revenue Brackets (Annual)"]
+            )
 
-    if earnings > 0:
-        pe_multiple = get_industry_pe_multiple(None, industry)
-        results['pe_valuation'] = earnings * pe_multiple
-        valuation_methods_used.append(f"Price/Earnings (P/E) using x{pe_multiple:.1f} multiple")
+    # Book Value (Asset-Based)
+    if company_data.get('assets') and company_data.get('liabilities'):
+        results['book_value'] = company_data['assets'] - company_data['liabilities']
 
-    if ebitda > 0:
-        ebitda_multiple = get_industry_ebitda_multiple(None, industry)
-        results['ebitda_valuation'] = ebitda * ebitda_multiple
-        valuation_methods_used.append(f"EV/EBITDA using x{ebitda_multiple:.1f} multiple")
+    # P/E Method
+    if company_data.get('earnings') and company_data.get('earnings') > 0:
+        industry = company_data.get('industry', 'Other')
+        pe_multiple = get_industry_pe_multiple(db['business_listings'], industry)
+        results['pe_valuation'] = company_data['earnings'] * pe_multiple
 
-    if cash_flows and any(cf != 0 for cf in cash_flows):
-        dcf_val = calculate_dcf(cash_flows)
-        if dcf_val > 0:
-            results['dcf_valuation'] = dcf_val
-            valuation_methods_used.append("Discounted Cash Flow (DCF)")
+    # EV/EBITDA Method
+    if company_data.get('ebitda') and company_data.get('ebitda') > 0:
+        industry = company_data.get('industry', 'Other')
+        ebitda_multiple = get_industry_ebitda_multiple(db['business_listings'], industry)
+        results['ebitda_valuation'] = company_data['ebitda'] * ebitda_multiple
 
-    if revenue > 0 and not (results.get('pe_valuation') or results.get('ebitda_valuation')):
+    # Revenue-based method for early-stage
+    if company_data.get('revenue') and company_data.get('revenue') > 0:
+        industry = company_data.get('industry', 'Other')
+        growth = company_data.get('growth', 'Moderate')
         revenue_multiples = {
-            'High': {'Software/SaaS': 8.0, 'E-commerce': 3.0, 'Other': 2.5},
-            'Moderate': {'Software/SaaS': 5.0, 'E-commerce': 1.8, 'Other': 1.5},
-            'Low': {'Software/SaaS': 2.5, 'E-commerce': 0.8, 'Other': 0.7}
+            'High': {'Beauty & Personal Care': 3.5, 'Tools': 2.5, 'Software/SaaS': 5.0, 'E-commerce': 3.0, 'Other': 3.0},
+            'Moderate': {'Beauty & Personal Care': 2.0, 'Tools': 1.5, 'Software/SaaS': 3.0, 'E-commerce': 2.0, 'Other': 1.5},
+            'Low': {'Beauty & Personal Care': 1.0, 'Tools': 0.8, 'Software/SaaS': 1.5, 'E-commerce': 1.0, 'Other': 0.8}
         }
-        multiple = revenue_multiples.get(growth, revenue_multiples['Moderate']).get(industry, 1.5)
-        results['revenue_valuation'] = revenue * multiple
-        valuation_methods_used.append(f"Revenue Multiple using x{multiple:.1f}")
-
-    valid_valuations = [v for v in results.values() if v > 0]
-    results['average_valuation'] = sum(valid_valuations) / len(valid_valuations) if valid_valuations else 0
-    results['valuation_range'] = (min(valid_valuations), max(valid_valuations)) if valid_valuations else (0, 0)
-    results['_methods_used'] = valuation_methods_used
+        multiple = revenue_multiples[growth].get(industry, revenue_multiples[growth]['Other'])
+        results['revenue_valuation'] = company_data['revenue'] * multiple
 
     return results
 
 def calculate_valuation_confidence(company_data, valuation_results):
+    """Calculate confidence scores for valuation estimates."""
     confidence_scores = {}
-    overall_completeness = 0
-    total_possible_score = 0
-
     required_fields = {
         'pe_valuation': ['earnings'],
         'ebitda_valuation': ['ebitda'],
-        'dcf_valuation': ['cash_flows_str'],
         'book_value': ['assets', 'liabilities'],
         'revenue_valuation': ['revenue']
     }
-    data_quality_factors = {'earnings': 1.0, 'ebitda': 1.0, 'revenue': 1.0, 'assets': 0.9, 'liabilities': 0.9, 'cash_flows_str': 0.7}
-    
-    for method in valuation_results:
-        if method.startswith('_') or method in ['average_valuation', 'valuation_range']:
-            continue
+    data_quality = {
+        'earnings': 1.0 if company_data.get('earnings', 0) > 0 else 0.5,
+        'ebitda': 1.0 if company_data.get('ebitda', 0) > 0 else 0.5,
+        'revenue': 1.0,
+        'assets': 0.9,
+        'liabilities': 0.9
+    }
+
+    for method, value in valuation_results.items():
         if method not in required_fields:
             continue
-        method_completeness = 1.0
+        base_confidence = 0.7
         quality_score = 1.0
-        total_possible_score += 1
-
         for field in required_fields[method]:
-            field_value = company_data.get(field)
-            is_present_and_valid = (
-                field_value is not None and (
-                    (field in ['earnings', 'ebitda', 'revenue'] and safe_float(field_value) > 0) or
-                    (field in ['assets', 'liabilities'] and safe_float(field_value) >= 0) or
-                    (field == 'cash_flows_str' and any(safe_float(cf) != 0 for cf in field_value.split(',')))
-                )
-            )
-            if not is_present_and_valid:
-                method_completeness *= 0.5
+            if field not in company_data or company_data[field] is None or company_data[field] == 0:
+                quality_score *= 0.5
             else:
-                quality_score *= data_quality_factors.get(field, 0.8)
-
-        confidence = 0.6 * method_completeness * quality_score
-        confidence_scores[method] = max(0.1, min(1.0, confidence))
-        if method_completeness > 0.75:
-            overall_completeness += 1
-
-    avg_method_confidence = sum(confidence_scores.values()) / len(confidence_scores) if confidence_scores else 0
-    completeness_ratio = overall_completeness / total_possible_score if total_possible_score else 0
-    confidence_scores['_overall_confidence'] = max(0.1, min(1.0, (avg_method_confidence * 0.6 + completeness_ratio * 0.4)))
-    confidence_scores['_overall_completeness'] = completeness_ratio
+                quality_score *= data_quality.get(field, 0.8)
+        confidence_scores[method] = base_confidence * quality_score
 
     return confidence_scores
