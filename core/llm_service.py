@@ -35,7 +35,6 @@ class LLMService:
         self._initialized = True
 
 
-GROQ_API_KEY = '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'
 
     def _retry_with_exponential_backoff(self, func, max_retries=3, initial_delay=1):
         """Helper function to implement retry logic with exponential backoff."""
