@@ -1,177 +1,130 @@
+from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
 from datetime import datetime
+from models.business_profile import BusinessProfile
 
 @dataclass
 class Question:
-    """Represents a business assessment question."""
     id: str
     text: str
-    category: str
-    follow_up_questions: List[str] = None
-
+    phase: str
+    business_type: Optional[str] = None
+    business_stage: Optional[str] = None
+    category: Optional[str] = None
+    follow_up_questions: List[str] = field(default_factory=list)
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
             "text": self.text,
+            "phase": self.phase,
+            "business_type": self.business_type,
+            "business_stage": self.business_stage,
             "category": self.category,
-            "follow_up_questions": self.follow_up_questions or []
+            "follow_up_questions": self.follow_up_questions
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Question':
         return cls(
-            id=data["id"],
-            text=data["text"],
-            category=data["category"],
+            id=data.get("id", ""),
+            text=data.get("text", ""),
+            phase=data.get("phase", ""),
+            business_type=data.get("business_type"),
+            business_stage=data.get("business_stage"),
+            category=data.get("category"),
             follow_up_questions=data.get("follow_up_questions", [])
         )
 
 @dataclass
 class Answer:
-    """Represents an answer to an assessment question."""
-    question_id: str
+    question: Question
     text: str
-    timestamp: datetime
-    structured_data: Dict[str, Any]
-    confidence_score: float
-
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "question_id": self.question_id,
+            "question": self.question.to_dict(),
             "text": self.text,
             "timestamp": self.timestamp.isoformat(),
-            "structured_data": self.structured_data,
-            "confidence_score": self.confidence_score
+            "metadata": self.metadata
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Answer':
         return cls(
-            question_id=data["question_id"],
-            text=data["text"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
-            structured_data=data["structured_data"],
-            confidence_score=data["confidence_score"]
+            question=Question.from_dict(data.get("question", {})),
+            text=data.get("text", ""),
+            timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat())),
+            metadata=data.get("metadata", {})
         )
 
 @dataclass
 class AssessmentSession:
-    """Represents an ongoing assessment session."""
-    business_name: str
-    business_stage: str
-    industry: str
-    start_time: datetime
-    questions_answers: List[Dict[str, Any]]
-    completion_status: float
-    current_question: Optional[Question] = None
-
+    business_profile: BusinessProfile
+    current_phase: str
+    questions_asked: List[Question] = field(default_factory=list)
+    answers_received: List[Answer] = field(default_factory=list)
+    red_flags: List[str] = field(default_factory=list)
+    opportunities: List[str] = field(default_factory=list)
+    completed: bool = False
+    start_time: datetime = field(default_factory=datetime.now)
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "business_name": self.business_name,
-            "business_stage": self.business_stage,
-            "industry": self.industry,
-            "start_time": self.start_time.isoformat(),
-            "questions_answers": [
-                {
-                    "question_id": qa["question_id"],
-                    "answer": qa["answer"].to_dict() if isinstance(qa["answer"], Answer) else qa["answer"]
-                }
-                for qa in self.questions_answers
-            ],
-            "completion_status": self.completion_status,
-            "current_question": self.current_question.to_dict() if self.current_question else None
+            "business_profile": self.business_profile.to_dict(),
+            "current_phase": self.current_phase,
+            "questions_asked": [q.to_dict() for q in self.questions_asked],
+            "answers_received": [a.to_dict() for a in self.answers_received],
+            "red_flags": self.red_flags,
+            "opportunities": self.opportunities,
+            "completed": self.completed,
+            "start_time": self.start_time.isoformat()
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AssessmentSession':
         return cls(
-            business_name=data["business_name"],
-            business_stage=data["business_stage"],
-            industry=data["industry"],
-            start_time=datetime.fromisoformat(data["start_time"]),
-            questions_answers=[
-                {
-                    "question_id": qa["question_id"],
-                    "answer": Answer.from_dict(qa["answer"]) if isinstance(qa["answer"], dict) else qa["answer"]
-                }
-                for qa in data["questions_answers"]
-            ],
-            completion_status=data["completion_status"],
-            current_question=Question.from_dict(data["current_question"]) if data.get("current_question") else None
+            business_profile=BusinessProfile.from_dict(data.get("business_profile", {})),
+            current_phase=data.get("current_phase", ""),
+            questions_asked=[Question.from_dict(q) for q in data.get("questions_asked", [])],
+            answers_received=[Answer.from_dict(a) for a in data.get("answers_received", [])],
+            red_flags=data.get("red_flags", []),
+            opportunities=data.get("opportunities", []),
+            completed=data.get("completed", False),
+            start_time=datetime.fromisoformat(data.get("start_time", datetime.now().isoformat()))
         )
 
 @dataclass
 class AssessmentResult:
-    """Represents the final result of a business assessment."""
-    business_name: str
-    completion_date: datetime
+    business_profile: BusinessProfile
     scores: Dict[str, float]
     recommendations: List[str]
+    risks: List[str]
     opportunities: List[str]
-    risk_factors: List[str]
-    detailed_analysis: Optional[Dict[str, Any]] = None
-
+    key_findings: List[str]
+    completion_time: datetime = field(default_factory=datetime.now)
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "business_name": self.business_name,
-            "completion_date": self.completion_date.isoformat(),
+            "business_profile": self.business_profile.to_dict(),
             "scores": self.scores,
             "recommendations": self.recommendations,
+            "risks": self.risks,
             "opportunities": self.opportunities,
-            "risk_factors": self.risk_factors,
-            "detailed_analysis": self.detailed_analysis
+            "key_findings": self.key_findings,
+            "completion_time": self.completion_time.isoformat()
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AssessmentResult':
         return cls(
-            business_name=data["business_name"],
-            completion_date=datetime.fromisoformat(data["completion_date"]),
-            scores=data["scores"],
-            recommendations=data["recommendations"],
-            opportunities=data["opportunities"],
-            risk_factors=data["risk_factors"],
-            detailed_analysis=data.get("detailed_analysis")
+            business_profile=BusinessProfile.from_dict(data.get("business_profile", {})),
+            scores=data.get("scores", {}),
+            recommendations=data.get("recommendations", []),
+            risks=data.get("risks", []),
+            opportunities=data.get("opportunities", []),
+            key_findings=data.get("key_findings", []),
+            completion_time=datetime.fromisoformat(data.get("completion_time", datetime.now().isoformat()))
         )
-
-    def get_overall_score(self) -> float:
-        """Calculate the overall assessment score."""
-        if not self.scores:
-            return 0.0
-        return sum(self.scores.values()) / len(self.scores)
-
-    def get_primary_recommendation(self) -> str:
-        """Get the most important recommendation."""
-        return self.recommendations[0] if self.recommendations else "No recommendations available."
-
-    def get_critical_risks(self) -> List[str]:
-        """Get the most critical risk factors."""
-        return self.risk_factors[:3] if self.risk_factors else []
-
-    def get_top_opportunities(self) -> List[str]:
-        """Get the top opportunities."""
-        return self.opportunities[:3] if self.opportunities else []
-
-    def get_category_score(self, category: str) -> float:
-        """Get the score for a specific category."""
-        return self.scores.get(category, 0.0)
-
-    def is_high_potential(self) -> bool:
-        """Determine if the business has high potential."""
-        return self.get_overall_score() >= 0.75
-
-    def needs_immediate_attention(self) -> bool:
-        """Determine if the business needs immediate attention."""
-        return self.get_overall_score() < 0.4
-
-    def get_summary(self) -> Dict[str, Any]:
-        """Get a summary of the assessment results."""
-        return {
-            "overall_score": self.get_overall_score(),
-            "primary_recommendation": self.get_primary_recommendation(),
-            "critical_risks": self.get_critical_risks(),
-            "top_opportunities": self.get_top_opportunities(),
-            "high_potential": self.is_high_potential(),
-            "needs_attention": self.needs_immediate_attention()
-        }
