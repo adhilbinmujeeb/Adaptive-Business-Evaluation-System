@@ -1,5 +1,4 @@
 from typing import Optional, List, Dict, Any
-import os
 import json
 import time
 from datetime import datetime
@@ -17,25 +16,23 @@ class LLMService:
         if self._initialized:
             return
             
-        self.api_key = os.getenv('GROQ_API_KEY')
-        self.use_mock = not self.api_key  # Use mock mode if no API key is available
+        # Directly initialize with API key
+        self.api_key = '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'
+        self.use_mock = False  # We have an API key, so no need for mock mode
         
-        if not self.use_mock:
-            try:
-                from groq import Groq
-                self.client = Groq(
-                    api_key=self.api_key,
-                    timeout=60.0
-                )
-                self.model = "llama2-70b-4096"
-            except Exception as e:
-                print(f"Warning: Failed to initialize Groq client ({str(e)}). Falling back to mock mode.")
-                self.use_mock = True
+        try:
+            from groq import Groq
+            self.client = Groq(
+                api_key=self.api_key,
+                timeout=60.0
+            )
+            self.model = "llama2-70b-4096"
+        except Exception as e:
+            print(f"Warning: Failed to initialize Groq client ({str(e)}). Falling back to mock mode.")
+            self.use_mock = True
         
         self._initialized = True
-
-
-
+        
     def _retry_with_exponential_backoff(self, func, max_retries=3, initial_delay=1):
         """Helper function to implement retry logic with exponential backoff."""
         for attempt in range(max_retries):
