@@ -1,10 +1,10 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
-from ..models.assessment import Question, Answer, AssessmentSession, AssessmentResult
-from ..models.business_profile import BusinessProfile
-from ..core.database import DatabaseConnection
-from ..core.llm_service import LLMService
-from ..core.config import QUESTION_WEIGHTS, BusinessStage
+from models.assessment import Question, Answer, AssessmentSession, AssessmentResult
+from models.business_profile import BusinessProfile
+from core.database import DatabaseConnection
+from core.llm_service import LLMService
+from core.config import BusinessStage, FUNCTIONAL_AREAS
 
 class AssessmentService:
     def __init__(self):
@@ -13,56 +13,50 @@ class AssessmentService:
 
     def start_assessment(
         self,
-        business_id: str,
+        business_name: str,
         business_stage: str,
         industry: str
     ) -> AssessmentSession:
-        """Initialize a new assessment session."""
-        return AssessmentSession(
-            business_id=business_id,
+        """Start a new assessment session."""
+        session = AssessmentSession(
+            business_name=business_name,
             business_stage=business_stage,
             industry=industry,
-            start_time=datetime.now()
+            start_time=datetime.now(),
+            questions_answers=[],
+            completion_status=0.0
         )
+        return session
 
     def get_next_question(
         self,
         session: AssessmentSession,
         previous_answers: List[Dict[str, Any]] = None
     ) -> Optional[Question]:
-        """Get the next most relevant question based on previous answers."""
-        if session.completion_status >= 1.0:
-            return None
+        """Get the next relevant question based on previous answers."""
+        if previous_answers is None:
+            previous_answers = []
 
-        # Get weights for current business stage
-        stage_weights = QUESTION_WEIGHTS.get(session.business_stage, {})
+        # Get base questions for business stage
+        stage_questions = self.db.get_questions_for_stage(session.business_stage)
         
-        # Get questions already asked
-        asked_questions = set(qa["question"]["id"] for qa in session.questions_answers)
+        # Filter out already answered questions
+        answered_ids = {qa["question_id"] for qa in previous_answers}
+        available_questions = [q for q in stage_questions if q["_id"] not in answered_ids]
         
-        # Get potential next questions
-        potential_questions = self._get_potential_questions(
-            session.business_stage,
-            session.industry,
-            asked_questions
-        )
-        
-        if not potential_questions:
+        if not available_questions:
             return None
             
-        # Score questions based on relevance
-        scored_questions = []
-        for question in potential_questions:
-            score = self._calculate_question_relevance(
-                question,
-                previous_answers,
-                stage_weights
-            )
-            scored_questions.append((question, score))
-            
-        # Sort by score and return highest scoring question
-        scored_questions.sort(key=lambda x: x[1], reverse=True)
-        return scored_questions[0][0] if scored_questions else None
+        # Use LLM to select most relevant question
+        context = self._build_question_context(session, previous_answers)
+        selected_question = self._select_next_question(available_questions, context)
+        
+        return Question(
+            id=selected_question["_id"],
+            text=selected_question["text"],
+            category=selected_question["category"],
+            follow_up_questions=selected_question.get("follow_up_questions", [])
+        )
 
     def process_answer(
         self,
@@ -70,27 +64,23 @@ class AssessmentService:
         question: Question,
         answer_text: str
     ) -> Answer:
-        """Process and analyze an answer."""
-        # Extract relevant information using LLM
-        extracted_data = self._extract_answer_data(question, answer_text)
+        """Process and analyze a user's answer."""
+        # Extract structured data from answer using LLM
+        structured_data = self._extract_answer_data(question, answer_text)
         
-        # Calculate confidence score
-        confidence_score = self._calculate_answer_confidence(
-            question,
-            answer_text,
-            extracted_data
-        )
-        
+        # Create answer object
         answer = Answer(
             question_id=question.id,
-            response=answer_text,
+            text=answer_text,
             timestamp=datetime.now(),
-            confidence_score=confidence_score,
-            extracted_data=extracted_data
+            structured_data=structured_data,
+            confidence_score=self._calculate_answer_confidence(answer_text)
         )
         
-        # Update session with new answer
-        session.add_answer(question, answer)
+        # Update session progress
+        total_questions = len(self.db.get_questions_for_stage(session.business_stage))
+        session.questions_answers.append({"question_id": question.id, "answer": answer})
+        session.completion_status = len(session.questions_answers) / total_questions
         
         return answer
 
@@ -98,219 +88,264 @@ class AssessmentService:
         self,
         session: AssessmentSession
     ) -> AssessmentResult:
-        """Generate final assessment result and recommendations."""
-        # Extract business profile from answers
-        business_profile = self._build_business_profile(session)
-        
-        # Calculate category scores
-        scores = self._calculate_category_scores(session)
+        """Generate final assessment results and recommendations."""
+        # Analyze answers and calculate scores
+        scores = self._calculate_category_scores(session.questions_answers)
         
         # Generate recommendations using LLM
         recommendations = self._generate_recommendations(
-            session,
-            business_profile,
-            scores
+            session.business_stage,
+            session.industry,
+            scores,
+            session.questions_answers
         )
         
-        # Identify risks and opportunities
-        risks = self._identify_risk_factors(session)
-        opportunities = self._identify_opportunities(session)
+        # Identify opportunities and risks
+        opportunities = self._identify_opportunities(session.questions_answers)
+        risk_factors = self._identify_risks(session.questions_answers)
         
         return AssessmentResult(
-            session_id=str(session.business_id),
-            business_profile=business_profile,
+            business_name=session.business_name,
+            completion_date=datetime.now(),
             scores=scores,
             recommendations=recommendations,
-            risk_factors=risks,
             opportunities=opportunities,
-            completion_time=datetime.now()
+            risk_factors=risk_factors
         )
 
-    def _get_potential_questions(
+    def _build_question_context(
         self,
-        business_stage: str,
-        industry: str,
-        asked_questions: set
-    ) -> List[Question]:
-        """Get potential next questions from the database."""
-        questions = self.db.get_collection("questions").find({
-            "business_stage": business_stage,
-            "id": {"$nin": list(asked_questions)}
-        })
-        
-        return [Question(**q) for q in questions]
+        session: AssessmentSession,
+        previous_answers: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Build context for question selection."""
+        return {
+            "business_stage": session.business_stage,
+            "industry": session.industry,
+            "previous_answers": previous_answers,
+            "completion_status": session.completion_status
+        }
 
-    def _calculate_question_relevance(
+    def _select_next_question(
         self,
-        question: Question,
-        previous_answers: List[Dict[str, Any]],
-        stage_weights: Dict[str, float]
-    ) -> float:
-        """Calculate relevance score for a question."""
-        base_score = stage_weights.get(question.category, 0.5)
+        available_questions: List[Dict[str, Any]],
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Select the most relevant next question using LLM."""
+        prompt = f"""
+        Given the following context and available questions, select the most relevant question to ask next:
         
-        # Adjust score based on dependencies
-        if question.dependencies:
-            dependency_score = self._check_dependencies(
-                question.dependencies,
-                previous_answers
-            )
-            base_score *= dependency_score
-            
-        return base_score
+        Context:
+        - Business Stage: {context['business_stage']}
+        - Industry: {context['industry']}
+        - Progress: {context['completion_status']:.0%} complete
+        
+        Previous answers summary:
+        {self._summarize_previous_answers(context['previous_answers'])}
+        
+        Available questions:
+        {self._format_questions_for_prompt(available_questions)}
+        
+        Return the ID of the most relevant question to ask next.
+        """
+        
+        response = self.llm.generate_response(prompt)
+        question_id = response.strip()
+        
+        return next(q for q in available_questions if str(q["_id"]) == question_id)
 
     def _extract_answer_data(
         self,
         question: Question,
         answer_text: str
     ) -> Dict[str, Any]:
-        """Extract structured data from answer using LLM."""
+        """Extract structured data from answer text using LLM."""
         prompt = f"""
-        Extract relevant business information from this answer.
-        Question Category: {question.category}
-        Question: {question.text}
+        Extract key information from the following answer to: "{question.text}"
+        
         Answer: {answer_text}
         
-        Extract and structure key information relevant to business assessment.
-        """
-        
-        return self.llm.validate_response(
-            answer_text,
-            [question.category, question.subcategory]
-        )
-
-    def _calculate_answer_confidence(
-        self,
-        question: Question,
-        answer_text: str,
-        extracted_data: Dict[str, Any]
-    ) -> float:
-        """Calculate confidence score for an answer."""
-        # Base confidence on answer length and completeness
-        base_confidence = min(len(answer_text.split()) / 50, 1.0)
-        
-        # Adjust based on extracted data completeness
-        data_completeness = len(extracted_data) / 3  # Assuming we expect ~3 key pieces of info
-        
-        return (base_confidence + data_completeness) / 2
-
-    def _build_business_profile(
-        self,
-        session: AssessmentSession
-    ) -> Dict[str, Any]:
-        """Build comprehensive business profile from assessment answers."""
-        profile = {
-            "business_stage": session.business_stage,
-            "industry": session.industry,
-            "metrics": {},
-            "analysis": {}
-        }
-        
-        for qa in session.questions_answers:
-            category = qa["question"]["category"]
-            extracted_data = qa["answer"]["extracted_data"]
-            
-            if category not in profile["metrics"]:
-                profile["metrics"][category] = {}
-                
-            profile["metrics"][category].update(extracted_data)
-            
-        return profile
-
-    def _calculate_category_scores(
-        self,
-        session: AssessmentSession
-    ) -> Dict[str, float]:
-        """Calculate scores for each assessment category."""
-        scores = {}
-        
-        for category, weight in QUESTION_WEIGHTS[session.business_stage].items():
-            category_answers = [
-                qa for qa in session.questions_answers
-                if qa["question"]["category"] == category
-            ]
-            
-            if category_answers:
-                avg_confidence = sum(
-                    a["answer"]["confidence_score"] for a in category_answers
-                ) / len(category_answers)
-                
-                scores[category] = avg_confidence * weight
-                
-        return scores
-
-    def _generate_recommendations(
-        self,
-        session: AssessmentSession,
-        business_profile: Dict[str, Any],
-        scores: Dict[str, float]
-    ) -> List[str]:
-        """Generate strategic recommendations using LLM."""
-        prompt = f"""
-        Based on the following business assessment, provide strategic recommendations:
-        
-        Business Profile: {business_profile}
-        Category Scores: {scores}
-        Business Stage: {session.business_stage}
-        Industry: {session.industry}
-        
-        Provide 3-5 specific, actionable recommendations for business improvement.
+        Return a JSON object with the following structure:
+        {{
+            "key_points": ["point1", "point2", ...],
+            "sentiment": "positive/negative/neutral",
+            "confidence": 0.0-1.0,
+            "category_specific_data": {{}}
+        }}
         """
         
         response = self.llm.generate_response(prompt)
-        
-        # Parse recommendations from response
-        # This could be enhanced with more structured parsing
-        recommendations = [
-            r.strip() for r in response.split('\n')
-            if r.strip() and not r.startswith(('Based on', 'Here are', 'Recommendations:'))
-        ]
-        
-        return recommendations[:5]  # Limit to top 5 recommendations
+        return eval(response)  # Note: In production, use proper JSON parsing
 
-    def _identify_risk_factors(
-        self,
-        session: AssessmentSession
-    ) -> List[str]:
-        """Identify key risk factors from assessment answers."""
-        risks = []
+    def _calculate_answer_confidence(self, answer_text: str) -> float:
+        """Calculate confidence score for an answer."""
+        # Simple heuristic based on answer length and detail
+        words = answer_text.split()
+        base_score = min(len(words) / 100.0, 0.8)  # Cap at 0.8
         
-        for qa in session.questions_answers:
-            answer_data = qa["answer"]["extracted_data"]
+        # Add bonus for specific details
+        detail_indicators = ['because', 'specifically', 'for example', 'such as']
+        detail_bonus = sum(0.05 for indicator in detail_indicators if indicator in answer_text.lower())
+        
+        return min(base_score + detail_bonus, 1.0)
+
+    def _calculate_category_scores(
+        self,
+        questions_answers: List[Dict[str, Any]]
+    ) -> Dict[str, float]:
+        """Calculate scores for each assessment category."""
+        category_scores = {area: 0.0 for area in FUNCTIONAL_AREAS}
+        category_counts = {area: 0 for area in FUNCTIONAL_AREAS}
+        
+        for qa in questions_answers:
+            answer = qa["answer"]
+            question = self.db.get_question_by_id(qa["question_id"])
             
-            # Look for specific risk indicators
-            if "challenges" in answer_data:
-                risks.extend(answer_data["challenges"])
-                
-            if "competition" in answer_data and answer_data["competition"].get("threat_level", "").lower() == "high":
-                risks.append(f"High competition in {answer_data['competition'].get('area', 'market')}")
-                
-            # Add financial risks
-            if "financials" in answer_data:
-                fin = answer_data["financials"]
-                if fin.get("burn_rate", 0) > fin.get("revenue", 0):
-                    risks.append("High burn rate relative to revenue")
-                    
-        return list(set(risks))  # Remove duplicates
+            if question["category"] in category_scores:
+                score = answer.confidence_score * self._calculate_answer_quality(answer)
+                category_scores[question["category"]] += score
+                category_counts[question["category"]] += 1
+        
+        # Calculate averages
+        for category in category_scores:
+            if category_counts[category] > 0:
+                category_scores[category] /= category_counts[category]
+        
+        return category_scores
+
+    def _calculate_answer_quality(self, answer: Answer) -> float:
+        """Calculate the quality score of an answer."""
+        # Base score from structured data
+        if not answer.structured_data:
+            return 0.5
+            
+        base_score = 0.6
+        
+        # Add points for comprehensive responses
+        if len(answer.structured_data.get("key_points", [])) >= 3:
+            base_score += 0.2
+            
+        # Add points for positive sentiment
+        if answer.structured_data.get("sentiment") == "positive":
+            base_score += 0.1
+            
+        # Add points for high confidence
+        if answer.structured_data.get("confidence", 0) > 0.8:
+            base_score += 0.1
+            
+        return min(base_score, 1.0)
+
+    def _generate_recommendations(
+        self,
+        business_stage: str,
+        industry: str,
+        scores: Dict[str, float],
+        questions_answers: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Generate recommendations based on assessment results."""
+        context = f"""
+        Business Stage: {business_stage}
+        Industry: {industry}
+        
+        Category Scores:
+        {self._format_scores_for_prompt(scores)}
+        
+        Key Findings:
+        {self._summarize_answers(questions_answers)}
+        
+        Generate 3-5 specific, actionable recommendations based on the assessment results.
+        """
+        
+        response = self.llm.generate_response(context)
+        return [rec.strip() for rec in response.split('\n') if rec.strip()]
 
     def _identify_opportunities(
         self,
-        session: AssessmentSession
+        questions_answers: List[Dict[str, Any]]
     ) -> List[str]:
-        """Identify growth opportunities from assessment answers."""
-        opportunities = []
+        """Identify business opportunities from assessment answers."""
+        context = self._summarize_answers(questions_answers)
         
-        for qa in session.questions_answers:
-            answer_data = qa["answer"]["extracted_data"]
+        prompt = f"""
+        Based on the following assessment summary, identify 3-4 key business opportunities:
+        
+        {context}
+        
+        Return each opportunity on a new line.
+        """
+        
+        response = self.llm.generate_response(prompt)
+        return [opp.strip() for opp in response.split('\n') if opp.strip()]
+
+    def _identify_risks(
+        self,
+        questions_answers: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Identify potential risks from assessment answers."""
+        context = self._summarize_answers(questions_answers)
+        
+        prompt = f"""
+        Based on the following assessment summary, identify 3-4 key business risks:
+        
+        {context}
+        
+        Return each risk on a new line.
+        """
+        
+        response = self.llm.generate_response(prompt)
+        return [risk.strip() for risk in response.split('\n') if risk.strip()]
+
+    def _summarize_previous_answers(
+        self,
+        previous_answers: List[Dict[str, Any]]
+    ) -> str:
+        """Create a summary of previous answers for context."""
+        if not previous_answers:
+            return "No previous answers."
             
-            # Look for growth indicators
-            if "market" in answer_data:
-                market = answer_data["market"]
-                if market.get("growth_rate", 0) > 0.2:
-                    opportunities.append(f"High growth potential in {market.get('segment', 'market')}")
-                    
-            # Add expansion opportunities
-            if "expansion" in answer_data:
-                opportunities.extend(answer_data["expansion"].get("opportunities", []))
-                
-        return list(set(opportunities))  # Remove duplicates
+        summary = []
+        for qa in previous_answers[-3:]:  # Only use last 3 answers for context
+            question = self.db.get_question_by_id(qa["question_id"])
+            answer = qa["answer"]
+            summary.append(f"Q: {question['text']}\nA: {answer.text[:100]}...")
+            
+        return "\n\n".join(summary)
+
+    def _format_questions_for_prompt(
+        self,
+        questions: List[Dict[str, Any]]
+    ) -> str:
+        """Format questions for LLM prompt."""
+        return "\n".join(
+            f"ID: {q['_id']}\nCategory: {q['category']}\nQuestion: {q['text']}"
+            for q in questions
+        )
+
+    def _format_scores_for_prompt(
+        self,
+        scores: Dict[str, float]
+    ) -> str:
+        """Format category scores for LLM prompt."""
+        return "\n".join(
+            f"{category}: {score:.1%}"
+            for category, score in scores.items()
+        )
+
+    def _summarize_answers(
+        self,
+        questions_answers: List[Dict[str, Any]]
+    ) -> str:
+        """Create a summary of all answers for analysis."""
+        summary = []
+        for qa in questions_answers:
+            question = self.db.get_question_by_id(qa["question_id"])
+            answer = qa["answer"]
+            key_points = answer.structured_data.get("key_points", [])
+            
+            summary.append(
+                f"Topic: {question['category']}\n"
+                f"Key Points: {', '.join(key_points)}\n"
+                f"Sentiment: {answer.structured_data.get('sentiment', 'neutral')}"
+            )
+            
+        return "\n\n".join(summary)
