@@ -1,201 +1,194 @@
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 @dataclass
 class FinancialMetrics:
-    """Financial metrics for a business."""
-    revenue: float
-    profit: Optional[float] = None
-    ebitda: Optional[float] = None
-    operating_costs: Optional[float] = None
-    revenue_growth: Optional[float] = 0.0
-    growth_rate: Optional[float] = 0.0
+    revenue: float = 0.0
+    profit: float = 0.0
+    ebitda: float = 0.0
+    growth_rate: float = 0.0
+    burn_rate: Optional[float] = None
+    cash_balance: Optional[float] = None
+    revenue_growth: Optional[float] = None
     ebitda_margin: Optional[float] = None
     profit_margin: Optional[float] = None
-
+    free_cash_flow: Optional[float] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             "revenue": self.revenue,
             "profit": self.profit,
             "ebitda": self.ebitda,
-            "operating_costs": self.operating_costs,
-            "revenue_growth": self.revenue_growth,
             "growth_rate": self.growth_rate,
+            "burn_rate": self.burn_rate,
+            "cash_balance": self.cash_balance,
+            "revenue_growth": self.revenue_growth,
             "ebitda_margin": self.ebitda_margin,
-            "profit_margin": self.profit_margin
+            "profit_margin": self.profit_margin,
+            "free_cash_flow": self.free_cash_flow
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'FinancialMetrics':
         return cls(
-            revenue=data.get("revenue", 0),
-            profit=data.get("profit"),
-            ebitda=data.get("ebitda"),
-            operating_costs=data.get("operating_costs"),
-            revenue_growth=data.get("revenue_growth", 0.0),
-            growth_rate=data.get("growth_rate", 0.0),
-            ebitda_margin=data.get("ebitda_margin"),
-            profit_margin=data.get("profit_margin")
+            revenue=float(data.get("revenue", 0.0)),
+            profit=float(data.get("profit", 0.0)),
+            ebitda=float(data.get("ebitda", 0.0)),
+            growth_rate=float(data.get("growth_rate", 0.0)),
+            burn_rate=float(data.get("burn_rate")) if data.get("burn_rate") is not None else None,
+            cash_balance=float(data.get("cash_balance")) if data.get("cash_balance") is not None else None,
+            revenue_growth=float(data.get("revenue_growth")) if data.get("revenue_growth") is not None else None,
+            ebitda_margin=float(data.get("ebitda_margin")) if data.get("ebitda_margin") is not None else None,
+            profit_margin=float(data.get("profit_margin")) if data.get("profit_margin") is not None else None,
+            free_cash_flow=float(data.get("free_cash_flow")) if data.get("free_cash_flow") is not None else None
         )
-
-    def calculate_margins(self):
-        """Calculate financial margins if not already set."""
-        if self.revenue > 0:
-            if self.profit is not None and self.profit_margin is None:
-                self.profit_margin = self.profit / self.revenue
-            if self.ebitda is not None and self.ebitda_margin is None:
-                self.ebitda_margin = self.ebitda / self.revenue
 
 @dataclass
 class MarketMetrics:
-    """Market-related metrics for a business."""
-    total_market_size: float
-    market_share: Optional[float] = None
-    competitor_count: Optional[int] = None
-    competitors: Optional[List[str]] = None
-    market_growth_rate: Optional[float] = None
-    target_market_segments: Optional[List[str]] = None
-
+    total_market_size: float = 0.0
+    market_share: float = 0.0
+    competitor_count: int = 0
+    market_growth_rate: float = 0.0
+    target_market_size: Optional[float] = None
+    market_penetration: Optional[float] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             "total_market_size": self.total_market_size,
             "market_share": self.market_share,
             "competitor_count": self.competitor_count,
-            "competitors": self.competitors,
             "market_growth_rate": self.market_growth_rate,
-            "target_market_segments": self.target_market_segments
+            "target_market_size": self.target_market_size,
+            "market_penetration": self.market_penetration
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'MarketMetrics':
         return cls(
-            total_market_size=data.get("total_market_size", 0),
-            market_share=data.get("market_share"),
-            competitor_count=data.get("competitor_count"),
-            competitors=data.get("competitors"),
-            market_growth_rate=data.get("market_growth_rate"),
-            target_market_segments=data.get("target_market_segments")
+            total_market_size=float(data.get("total_market_size", 0.0)),
+            market_share=float(data.get("market_share", 0.0)),
+            competitor_count=int(data.get("competitor_count", 0)),
+            market_growth_rate=float(data.get("market_growth_rate", 0.0)),
+            target_market_size=float(data.get("target_market_size")) if data.get("target_market_size") is not None else None,
+            market_penetration=float(data.get("market_penetration")) if data.get("market_penetration") is not None else None
         )
-
-    def calculate_market_share(self, revenue: float):
-        """Calculate market share if not already set."""
-        if self.market_share is None and self.total_market_size > 0:
-            self.market_share = revenue / self.total_market_size
 
 @dataclass
 class OperationalMetrics:
-    """Operational metrics for a business."""
-    customer_count: Optional[int] = None
-    employee_count: Optional[int] = None
-    customer_acquisition_cost: Optional[float] = None
+    employee_count: int = 0
+    customer_count: int = 0
+    churn_rate: float = 0.0
+    retention_rate: float = 0.0
+    acquisition_cost: Optional[float] = None
     lifetime_value: Optional[float] = None
-    churn_rate: Optional[float] = None
-    retention_rate: Optional[float] = None
-
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "customer_count": self.customer_count,
             "employee_count": self.employee_count,
-            "customer_acquisition_cost": self.customer_acquisition_cost,
-            "lifetime_value": self.lifetime_value,
+            "customer_count": self.customer_count,
             "churn_rate": self.churn_rate,
-            "retention_rate": self.retention_rate
+            "retention_rate": self.retention_rate,
+            "acquisition_cost": self.acquisition_cost,
+            "lifetime_value": self.lifetime_value
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'OperationalMetrics':
         return cls(
-            customer_count=data.get("customer_count"),
-            employee_count=data.get("employee_count"),
-            customer_acquisition_cost=data.get("customer_acquisition_cost"),
-            lifetime_value=data.get("lifetime_value"),
-            churn_rate=data.get("churn_rate"),
-            retention_rate=data.get("retention_rate")
+            employee_count=int(data.get("employee_count", 0)),
+            customer_count=int(data.get("customer_count", 0)),
+            churn_rate=float(data.get("churn_rate", 0.0)),
+            retention_rate=float(data.get("retention_rate", 0.0)),
+            acquisition_cost=float(data.get("acquisition_cost")) if data.get("acquisition_cost") is not None else None,
+            lifetime_value=float(data.get("lifetime_value")) if data.get("lifetime_value") is not None else None
         )
 
 @dataclass
 class BusinessProfile:
-    """Complete business profile with all metrics."""
-    business_name: str
+    id: str
+    name: str
     industry: str
     business_stage: str
-    description: Optional[str]
-    business_model: str
-    financial_metrics: FinancialMetrics
-    market_metrics: MarketMetrics
-    operational_metrics: Optional[OperationalMetrics] = None
-    founding_date: Optional[datetime] = None
-    last_updated: Optional[datetime] = None
-
+    business_type: str
+    description: str
+    founded_date: datetime
+    financial_metrics: FinancialMetrics = field(default_factory=FinancialMetrics)
+    market_metrics: MarketMetrics = field(default_factory=MarketMetrics)
+    operational_metrics: OperationalMetrics = field(default_factory=OperationalMetrics)
+    competitive_advantages: List[str] = field(default_factory=list)
+    key_risks: List[str] = field(default_factory=list)
+    growth_opportunities: List[str] = field(default_factory=list)
+    last_updated: datetime = field(default_factory=datetime.now)
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "business_name": self.business_name,
+            "id": self.id,
+            "name": self.name,
             "industry": self.industry,
             "business_stage": self.business_stage,
+            "business_type": self.business_type,
             "description": self.description,
-            "business_model": self.business_model,
+            "founded_date": self.founded_date.isoformat(),
             "financial_metrics": self.financial_metrics.to_dict(),
             "market_metrics": self.market_metrics.to_dict(),
-            "operational_metrics": self.operational_metrics.to_dict() if self.operational_metrics else None,
-            "founding_date": self.founding_date.isoformat() if self.founding_date else None,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None
+            "operational_metrics": self.operational_metrics.to_dict(),
+            "competitive_advantages": self.competitive_advantages,
+            "key_risks": self.key_risks,
+            "growth_opportunities": self.growth_opportunities,
+            "last_updated": self.last_updated.isoformat()
         }
-
+    
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'BusinessProfile':
         return cls(
-            business_name=data["business_name"],
-            industry=data["industry"],
-            business_stage=data["business_stage"],
-            description=data.get("description"),
-            business_model=data["business_model"],
-            financial_metrics=FinancialMetrics.from_dict(data["financial_metrics"]),
-            market_metrics=MarketMetrics.from_dict(data["market_metrics"]),
-            operational_metrics=OperationalMetrics.from_dict(data["operational_metrics"]) if data.get("operational_metrics") else None,
-            founding_date=datetime.fromisoformat(data["founding_date"]) if data.get("founding_date") else None,
-            last_updated=datetime.fromisoformat(data["last_updated"]) if data.get("last_updated") else None
+            id=data.get("id", ""),
+            name=data.get("name", ""),
+            industry=data.get("industry", ""),
+            business_stage=data.get("business_stage", ""),
+            business_type=data.get("business_type", ""),
+            description=data.get("description", ""),
+            founded_date=datetime.fromisoformat(data.get("founded_date", datetime.now().isoformat())),
+            financial_metrics=FinancialMetrics.from_dict(data.get("financial_metrics", {})),
+            market_metrics=MarketMetrics.from_dict(data.get("market_metrics", {})),
+            operational_metrics=OperationalMetrics.from_dict(data.get("operational_metrics", {})),
+            competitive_advantages=data.get("competitive_advantages", []),
+            key_risks=data.get("key_risks", []),
+            growth_opportunities=data.get("growth_opportunities", []),
+            last_updated=datetime.fromisoformat(data.get("last_updated", datetime.now().isoformat()))
         )
-
-    def calculate_derived_metrics(self):
-        """Calculate any derived metrics that haven't been set."""
-        # Calculate financial margins
-        self.financial_metrics.calculate_margins()
+    
+    def calculate_derived_metrics(self) -> Dict[str, float]:
+        """Calculate derived metrics from existing data."""
+        metrics = {}
         
-        # Calculate market share
-        self.market_metrics.calculate_market_share(self.financial_metrics.revenue)
-        
-        # Update last_updated timestamp
-        self.last_updated = datetime.now()
-
-    def get_business_age(self) -> Optional[float]:
-        """Calculate the age of the business in years."""
-        if self.founding_date:
-            delta = datetime.now() - self.founding_date
-            return delta.days / 365.25
-        return None
-
-    def get_key_metrics(self) -> Dict[str, Any]:
+        try:
+            # Financial ratios
+            if self.financial_metrics.revenue > 0:
+                metrics["profit_margin"] = self.financial_metrics.profit / self.financial_metrics.revenue
+                if self.financial_metrics.ebitda is not None:
+                    metrics["ebitda_margin"] = self.financial_metrics.ebitda / self.financial_metrics.revenue
+            
+            # Market metrics
+            if self.market_metrics.total_market_size > 0:
+                metrics["market_share"] = self.financial_metrics.revenue / self.market_metrics.total_market_size
+            
+            # Operational metrics
+            if self.operational_metrics.customer_count > 0 and self.financial_metrics.revenue > 0:
+                metrics["revenue_per_customer"] = self.financial_metrics.revenue / self.operational_metrics.customer_count
+                
+        except Exception as e:
+            print(f"Error calculating derived metrics: {str(e)}")
+            
+        return metrics
+    
+    def get_key_metrics_summary(self) -> Dict[str, Any]:
         """Get a summary of key metrics."""
         return {
             "revenue": self.financial_metrics.revenue,
+            "profit": self.financial_metrics.profit,
             "growth_rate": self.financial_metrics.growth_rate,
-            "profit_margin": self.financial_metrics.profit_margin,
             "market_share": self.market_metrics.market_share,
-            "business_age": self.get_business_age()
+            "customer_count": self.operational_metrics.customer_count,
+            "employee_count": self.operational_metrics.employee_count
         }
-
-    def validate(self) -> List[str]:
-        """Validate the business profile and return any issues."""
-        issues = []
-        
-        if self.financial_metrics.revenue <= 0:
-            issues.append("Revenue must be greater than zero")
-            
-        if self.market_metrics.total_market_size <= 0:
-            issues.append("Market size must be greater than zero")
-            
-        if self.financial_metrics.growth_rate is not None and (self.financial_metrics.growth_rate < -1 or self.financial_metrics.growth_rate > 10):
-            issues.append("Growth rate seems unrealistic")
-            
-        return issues
