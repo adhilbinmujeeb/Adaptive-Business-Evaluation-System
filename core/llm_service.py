@@ -1,7 +1,6 @@
 from typing import Optional, List, Dict, Any
 import os
 from groq import Groq
-from groq.types import ChatCompletion
 import backoff
 from datetime import datetime
 
@@ -49,7 +48,7 @@ class LLMService:
     ) -> str:
         """Generate a response using the Groq API with retry logic."""
         try:
-            chat_completion: ChatCompletion = self.client.chat.completions.create(
+            completion = self.client.chat.completions.create(
                 messages=[
                     {
                         "role": "system",
@@ -65,7 +64,7 @@ class LLMService:
                 max_tokens=max_tokens
             )
             
-            return chat_completion.choices[0].message.content.strip()
+            return completion.choices[0].message.content.strip()
             
         except Exception as e:
             print(f"Error generating response: {str(e)}")
