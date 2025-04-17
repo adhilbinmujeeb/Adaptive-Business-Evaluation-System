@@ -1,126 +1,188 @@
-from typing import List, Dict, Any, Optional
+from typing import Optional, List, Dict, Any
+import os
 from groq import Groq
-from .config import GROQ_API_KEY, DEFAULT_MODEL
+from groq.types import ChatCompletion
+import backoff
+from datetime import datetime
 
 class LLMService:
     _instance = None
-
+    
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(LLMService, cls).__new__(cls)
+            cls._instance._initialized = False
         return cls._instance
-
+    
     def __init__(self):
-        if not hasattr(self, 'client'):
-            self.client = Groq(api_key=GROQ_API_KEY)
-            self.default_model = DEFAULT_MODEL
-
+        if self._initialized:
+            return
+            
+        # Get API key from environment variable
+        self.api_key = os.getenv('GROQ_API_KEY')
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY environment variable not set")
+            
+        # Initialize Groq client
+        try:
+            self.client = Groq(
+                api_key=self.api_key,
+                timeout=60.0  # Set timeout to 60 seconds
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Groq client: {str(e)}")
+            
+        self.model = "llama2-70b-4096"  # Default model
+        self._initialized = True
+        
+    @backoff.on_exception(
+        backoff.expo,
+        (Exception),
+        max_tries=3,
+        max_time=30
+    )
     def generate_response(
         self,
         prompt: str,
-        system_message: Optional[str] = None,
-        model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: int = 1000
     ) -> str:
-        """Generate a response using the Groq API."""
+        """Generate a response using the Groq API with retry logic."""
         try:
-            messages = []
-            if system_message:
-                messages.append({"role": "system", "content": system_message})
-            messages.append({"role": "user", "content": prompt})
-
-            completion = self.client.chat.completions.create(
-                messages=messages,
-                model=model or self.default_model,
+            chat_completion: ChatCompletion = self.client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful business analysis assistant. Provide clear, concise, and accurate responses."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model=self.model,
                 temperature=temperature,
                 max_tokens=max_tokens
             )
-            return completion.choices[0].message.content
+            
+            return chat_completion.choices[0].message.content.strip()
+            
         except Exception as e:
-            print(f"Error generating LLM response: {e}")
-            return f"Error: {str(e)}"
-
-    def analyze_business_profile(self, profile_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze a business profile and provide insights."""
+            print(f"Error generating response: {str(e)}")
+            raise
+            
+    def analyze_business_profile(
+        self,
+        profile_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Analyze a business profile and extract key insights."""
         prompt = f"""
-        Analyze the following business profile and provide structured insights:
-
-        Business Profile:
-        {profile_data}
-
-        Provide analysis in the following areas:
-        1. Key Strengths
-        2. Risk Factors
-        3. Growth Opportunities
-        4. Strategic Recommendations
-        5. Valuation Considerations
-
-        Format the response as a JSON object with these categories as keys.
+        Analyze the following business profile and provide key insights:
+        
+        Business Name: {profile_data.get('business_name')}
+        Industry: {profile_data.get('industry')}
+        Stage: {profile_data.get('business_stage')}
+        Revenue: ${profile_data.get('revenue', 0):,.2f}
+        Growth Rate: {profile_data.get('growth_rate', 'N/A')}
+        
+        Provide analysis in the following JSON format:
+        {{
+            "strengths": ["strength1", "strength2", ...],
+            "weaknesses": ["weakness1", "weakness2", ...],
+            "opportunities": ["opportunity1", "opportunity2", ...],
+            "risks": ["risk1", "risk2", ...],
+            "recommendations": ["recommendation1", "recommendation2", ...]
+        }}
         """
-
+        
+        response = self.generate_response(prompt)
         try:
-            response = self.generate_response(
-                prompt,
-                system_message="You are an expert business analyst providing detailed insights.",
-                temperature=0.5
-            )
-            
-            # Basic cleaning of response to ensure it's JSON-compatible
-            response = response.replace("```json", "").replace("```", "").strip()
-            
-            # You might want to add more robust JSON parsing here
-            import json
-            return json.loads(response)
+            return eval(response)  # In production, use proper JSON parsing
         except Exception as e:
-            print(f"Error analyzing business profile: {e}")
-            return {}
-
+            print(f"Error parsing analysis response: {str(e)}")
+            return {
+                "strengths": [],
+                "weaknesses": [],
+                "opportunities": [],
+                "risks": [],
+                "recommendations": []
+            }
+            
     def generate_follow_up_questions(
         self,
-        conversation_history: List[Dict[str, str]],
-        business_stage: str,
-        industry: str
-    ) -> str:
-        """Generate relevant follow-up questions based on conversation history."""
+        context: Dict[str, Any],
+        previous_answers: List[Dict[str, Any]],
+        max_questions: int = 3
+    ) -> List[str]:
+        """Generate relevant follow-up questions based on context and previous answers."""
         prompt = f"""
-        Based on the following conversation history for a {business_stage} business in the {industry} industry,
-        generate the most relevant follow-up question.
-
-        Conversation History:
-        {conversation_history}
-
-        Generate a single, specific question that will help gather critical information
-        about the business, considering its stage and industry context.
+        Given the following context and previous answers, generate {max_questions} relevant follow-up questions:
+        
+        Context:
+        - Industry: {context.get('industry')}
+        - Business Stage: {context.get('business_stage')}
+        - Current Focus: {context.get('current_focus')}
+        
+        Previous Answers:
+        {self._format_previous_answers(previous_answers)}
+        
+        Generate {max_questions} specific, probing questions that will help gather more insights.
+        Return each question on a new line.
         """
-
-        return self.generate_response(
-            prompt,
-            system_message="You are an expert business interviewer conducting due diligence.",
-            temperature=0.7
-        )
-
-    def validate_response(self, response: str, expected_info: List[str]) -> Dict[str, Any]:
-        """Validate and extract specific information from a response."""
+        
+        response = self.generate_response(prompt)
+        return [q.strip() for q in response.split('\n') if q.strip()]
+        
+    def validate_response(
+        self,
+        response: str,
+        criteria: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate a response against given criteria."""
         prompt = f"""
-        Analyze the following response and extract/validate information about: {', '.join(expected_info)}
-
-        Response: {response}
-
-        For each item, provide:
-        1. Whether the information is present (true/false)
-        2. The extracted information if present
-        3. Confidence score (0-1)
-        4. Any inconsistencies or red flags
-
-        Format the response as a JSON object.
+        Validate the following response against the given criteria:
+        
+        Response:
+        {response}
+        
+        Criteria:
+        {self._format_criteria(criteria)}
+        
+        Return validation results in the following JSON format:
+        {{
+            "is_valid": true/false,
+            "missing_elements": ["element1", "element2", ...],
+            "suggestions": ["suggestion1", "suggestion2", ...],
+            "confidence_score": 0.0-1.0
+        }}
         """
-
+        
+        validation_response = self.generate_response(prompt)
         try:
-            return json.loads(self.generate_response(
-                prompt,
-                temperature=0.3
-            ))
+            return eval(validation_response)  # In production, use proper JSON parsing
         except Exception as e:
-            print(f"Error validating response: {e}")
-            return {}
+            print(f"Error parsing validation response: {str(e)}")
+            return {
+                "is_valid": False,
+                "missing_elements": [],
+                "suggestions": ["Error processing validation"],
+                "confidence_score": 0.0
+            }
+            
+    def _format_previous_answers(
+        self,
+        previous_answers: List[Dict[str, Any]]
+    ) -> str:
+        """Format previous answers for prompt context."""
+        formatted = []
+        for i, answer in enumerate(previous_answers[-3:], 1):  # Only use last 3 answers
+            formatted.append(f"Q{i}: {answer.get('question', 'N/A')}")
+            formatted.append(f"A{i}: {answer.get('answer', 'N/A')}\n")
+        return "\n".join(formatted)
+        
+    def _format_criteria(self, criteria: Dict[str, Any]) -> str:
+        """Format validation criteria for prompt."""
+        formatted = []
+        for key, value in criteria.items():
+            formatted.append(f"- {key}: {value}")
+        return "\n".join(formatted)
