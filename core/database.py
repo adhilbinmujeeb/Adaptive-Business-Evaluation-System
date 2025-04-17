@@ -1,122 +1,217 @@
-import pymongo
+from typing import List, Dict, Any, Optional
+import os
+from datetime import datetime
 from pymongo import MongoClient
-import time
-from typing import Optional, Dict, Any
-from .config import MONGO_URI, DB_NAME
+from pymongo.errors import ConnectionError, OperationFailure
 
 class DatabaseConnection:
     _instance = None
-    _client = None
-    _db = None
-
+    
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(DatabaseConnection, cls).__new__(cls)
+            cls._instance._initialized = False
         return cls._instance
-
+    
     def __init__(self):
-        if not self._client:
-            self._initialize_connection()
-
-    def _initialize_connection(self, max_retries: int = 3) -> None:
-        """Initialize MongoDB connection with retry logic."""
-        for attempt in range(max_retries):
-            try:
-                self._client = MongoClient(MONGO_URI)
-                # Test the connection
-                self._client.admin.command('ismaster')
-                self._db = self._client[DB_NAME]
-                print("MongoDB connection successful.")
-                return
-            except pymongo.errors.ConnectionFailure as e:
-                print(f"Attempt {attempt + 1} failed: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    raise Exception("Failed to connect to MongoDB after multiple retries")
-
-    @property
-    def db(self):
-        """Get the database instance."""
-        if not self._client:
-            self._initialize_connection()
-        return self._db
-
-    def get_collection(self, collection_name: str):
-        """Get a specific collection."""
-        return self.db[collection_name]
-
-    def find_similar_businesses(self, industry: str, limit: int = 5) -> list:
-        """Find similar businesses in the same industry."""
+        if self._initialized:
+            return
+            
+        # Use the provided MongoDB URI
+        self.mongo_uri = 'mongodb+srv://adhilbinmujeeb:admin123@cluster0.uz62z.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'
+        
         try:
-            return list(self.db.business_listings.find({
-                "business_basics.industry_category": {
-                    "$elemMatch": {"$regex": f"^{industry}$", "$options": "i"}
-                }
-            }).limit(limit))
+            # Initialize MongoDB client
+            self.client = MongoClient(self.mongo_uri)
+            
+            # Select database (you can change 'business_insights' to your preferred name)
+            self.db = self.client.business_rag
+            
+            # Initialize collections
+            self.businesses = self.db.business_listings
+            self.questions = self.db.questions
+            
+            # Test connection
+            self.client.admin.command('ping')
+            print("Successfully connected to MongoDB!")
+            
         except Exception as e:
-            print(f"Error finding similar businesses: {e}")
+            print(f"Error connecting to MongoDB: {str(e)}")
+            raise
+            
+        self._initialized = True
+    
+    def get_questions_for_stage(self, business_stage: str) -> List[Dict[str, Any]]:
+        """Get assessment questions for a specific business stage."""
+        try:
+            # Query the questions collection for the specific business stage
+            questions = list(self.questions.find({"business_stage": business_stage}))
+            return questions if questions else self._get_default_questions(business_stage)
+        except Exception as e:
+            print(f"Error fetching questions: {str(e)}")
+            return self._get_default_questions(business_stage)
+
+    def get_question_by_id(self, question_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific question by ID."""
+        try:
+            return self.questions.find_one({"_id": question_id})
+        except Exception as e:
+            print(f"Error fetching question: {str(e)}")
+            return None
+
+    def find_similar_businesses(
+        self,
+        industry: str,
+        revenue_range: str,
+        business_stage: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Find similar businesses based on criteria."""
+        try:
+            # Create revenue range bounds
+            min_revenue, max_revenue = self._get_revenue_range_bounds(revenue_range)
+            
+            # Build the query
+            query = {
+                "industry": industry,
+                "business_stage": business_stage,
+                "revenue": {"$gte": min_revenue, "$lt": max_revenue}
+            }
+            
+            # Execute the query
+            return list(self.businesses.find(query).limit(limit))
+            
+        except Exception as e:
+            print(f"Error finding similar businesses: {str(e)}")
             return []
 
-    def get_industry_metrics(self, industry: str) -> Dict[str, Any]:
-        """Get industry-specific metrics from historical data."""
-        try:
-            pipeline = [
+    def _get_revenue_range_bounds(self, range_category: str) -> tuple:
+        """Get the minimum and maximum revenue values for a range category."""
+        ranges = {
+            "0-1M": (0, 1_000_000),
+            "1M-10M": (1_000_000, 10_000_000),
+            "10M-50M": (10_000_000, 50_000_000),
+            "50M+": (50_000_000, float('inf'))
+        }
+        return ranges.get(range_category, (0, float('inf')))
+
+    def _get_default_questions(self, business_stage: str) -> List[Dict[str, Any]]:
+        """Provide default questions if database query fails."""
+        default_questions = {
+            "Startup": [
                 {
-                    "$match": {
-                        "business_basics.industry_category": {
-                            "$elemMatch": {"$regex": f"^{industry}$", "$options": "i"}
-                        }
-                    }
+                    "_id": "q1_startup",
+                    "text": "What is your current monthly revenue?",
+                    "category": "Financial",
+                    "business_stage": "Startup",
+                    "follow_up_questions": [
+                        "How has this changed over the past 6 months?",
+                        "What's your target revenue for the next year?"
+                    ]
                 },
                 {
-                    "$group": {
-                        "_id": None,
-                        "avg_valuation": {"$avg": "$pitch_metrics.implied_valuation"},
-                        "avg_revenue_multiple": {
-                            "$avg": {
-                                "$cond": [
-                                    {"$gt": ["$business_metrics.basic_metrics.revenue", 0]},
-                                    {"$divide": ["$pitch_metrics.implied_valuation", "$business_metrics.basic_metrics.revenue"]},
-                                    None
-                                ]
-                            }
-                        },
-                        "deal_count": {"$sum": 1},
-                        "successful_deals": {
-                            "$sum": {
-                                "$cond": [
-                                    {"$ne": ["$deal_outcome.final_result", "no deal"]},
-                                    1,
-                                    0
-                                ]
-                            }
-                        }
-                    }
+                    "_id": "q2_startup",
+                    "text": "What is your customer acquisition cost (CAC)?",
+                    "category": "Marketing",
+                    "business_stage": "Startup",
+                    "follow_up_questions": [
+                        "How does this compare to your lifetime value (LTV)?",
+                        "What channels have the lowest CAC?"
+                    ]
+                }
+            ],
+            "Growth": [
+                {
+                    "_id": "q1_growth",
+                    "text": "What is your year-over-year growth rate?",
+                    "category": "Financial",
+                    "business_stage": "Growth",
+                    "follow_up_questions": [
+                        "What are the main drivers of this growth?",
+                        "Is this growth sustainable?"
+                    ]
+                },
+                {
+                    "_id": "q2_growth",
+                    "text": "What is your market share in your primary market?",
+                    "category": "Market",
+                    "business_stage": "Growth",
+                    "follow_up_questions": [
+                        "Who are your main competitors?",
+                        "What is your competitive advantage?"
+                    ]
+                }
+            ],
+            "Mature": [
+                {
+                    "_id": "q1_mature",
+                    "text": "What is your EBITDA margin?",
+                    "category": "Financial",
+                    "business_stage": "Mature",
+                    "follow_up_questions": [
+                        "How has this evolved over the past 3 years?",
+                        "What initiatives are in place to improve margins?"
+                    ]
+                },
+                {
+                    "_id": "q2_mature",
+                    "text": "What is your dividend payout ratio?",
+                    "category": "Financial",
+                    "business_stage": "Mature",
+                    "follow_up_questions": [
+                        "How do you balance reinvestment vs. distributions?",
+                        "What's your capital allocation strategy?"
+                    ]
                 }
             ]
-            
-            result = list(self.db.business_listings.aggregate(pipeline))
-            if result:
-                return result[0]
-            return {}
-        except Exception as e:
-            print(f"Error getting industry metrics: {e}")
-            return {}
+        }
+        return default_questions.get(business_stage, [])
 
-    def get_relevant_questions(self, business_stage: str, category: str, limit: int = 5) -> list:
-        """Get relevant questions based on business stage and category."""
+    def initialize_collections(self):
+        """Initialize collections with default data if they're empty."""
         try:
-            return list(self.db.questions.find({
-                "category": category,
-                "business_stage": business_stage
-            }).limit(limit))
+            # Check if questions collection is empty
+            if self.questions.count_documents({}) == 0:
+                # Insert default questions
+                default_questions = []
+                for stage, questions in self._get_default_questions("all").items():
+                    for question in questions:
+                        default_questions.append(question)
+                
+                if default_questions:
+                    self.questions.insert_many(default_questions)
+                    print("Initialized questions collection with default data")
+            
+            # Check if businesses collection is empty
+            if self.businesses.count_documents({}) == 0:
+                # Insert some sample businesses
+                sample_businesses = [
+                    {
+                        "business_name": "Tech Innovators",
+                        "industry": "Technology",
+                        "business_stage": "Growth",
+                        "revenue": 5000000,
+                        "profit_margin": 0.15,
+                        "growth_rate": 0.25,
+                        "valuation": 20000000
+                    },
+                    {
+                        "business_name": "Digital Solutions",
+                        "industry": "Technology",
+                        "business_stage": "Startup",
+                        "revenue": 500000,
+                        "profit_margin": 0.05,
+                        "growth_rate": 0.40,
+                        "valuation": 3000000
+                    }
+                ]
+                self.businesses.insert_many(sample_businesses)
+                print("Initialized businesses collection with sample data")
+                
         except Exception as e:
-            print(f"Error getting relevant questions: {e}")
-            return []
+            print(f"Error initializing collections: {str(e)}")
 
     def close(self):
-        """Close the database connection."""
-        if self._client:
-            self._client.close()
-            self._client = None
+        """Close the MongoDB connection."""
+        if hasattr(self, 'client'):
+            self.client.close()
