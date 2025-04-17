@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 import os
 from groq import Groq
-import backoff
+import time
 from datetime import datetime
 
 class LLMService:
@@ -34,12 +34,20 @@ class LLMService:
         self.model = "llama2-70b-4096"  # Default model
         self._initialized = True
         
-    @backoff.on_exception(
-        backoff.expo,
-        (Exception),
-        max_tries=3,
-        max_time=30
-    )
+    def _retry_with_exponential_backoff(self, func, max_retries=3, initial_delay=1):
+        """Helper function to implement retry logic with exponential backoff."""
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except Exception as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    raise e
+                
+                # Calculate delay with exponential backoff
+                delay = initial_delay * (2 ** attempt)
+                print(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
+                time.sleep(delay)
+        
     def generate_response(
         self,
         prompt: str,
@@ -47,28 +55,31 @@ class LLMService:
         max_tokens: int = 1000
     ) -> str:
         """Generate a response using the Groq API with retry logic."""
-        try:
-            completion = self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful business analysis assistant. Provide clear, concise, and accurate responses."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                model=self.model,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            
-            return completion.choices[0].message.content.strip()
-            
-        except Exception as e:
-            print(f"Error generating response: {str(e)}")
-            raise
+        def _generate():
+            try:
+                completion = self.client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful business analysis assistant. Provide clear, concise, and accurate responses."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    model=self.model,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                
+                return completion.choices[0].message.content.strip()
+                
+            except Exception as e:
+                print(f"Error generating response: {str(e)}")
+                raise
+        
+        return self._retry_with_exponential_backoff(_generate)
             
     def analyze_business_profile(
         self,
