@@ -1,439 +1,205 @@
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-import json
-
-from models.assessment import Question, Answer, AssessmentSession, AssessmentResult
-from models.business_profile import BusinessProfile
+from typing import Dict, Any, Optional, List
 from core.database import DatabaseConnection
 from core.llm_service import LLMService
+from models.assessment import Question, Answer, AssessmentSession, AssessmentResult
+from models.business_profile import BusinessProfile
 
 class AssessmentService:
-    def __init__(self):
-        self.db = DatabaseConnection()
-        self.llm = LLMService()
-        self.interview_phases = {
-            "initial_discovery": {
-                "name": "Initial Discovery",
-                "questions": [
-                    {
-                        "_id": "id_1",
-                        "text": "Tell me about your business and what problem you're solving.",
-                        "category": "Overview"
-                    },
-                    {
-                        "_id": "id_2",
-                        "text": "How long have you been operating and what's your current stage?",
-                        "category": "Business Stage"
-                    },
-                    {
-                        "_id": "id_3",
-                        "text": "What industry are you in and who are your target customers?",
-                        "category": "Market"
-                    },
-                    {
-                        "_id": "id_4",
-                        "text": "What's your revenue model and current traction?",
-                        "category": "Financial"
-                    }
-                ]
-            },
-            "business_model": {
-                "name": "Business Model Deep Dive",
-                "questions": {
-                    "digital_saas": [
-                        {
-                            "_id": "saas_1",
-                            "text": "What's your monthly recurring revenue and growth rate?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "saas_2",
-                            "text": "What's your customer acquisition cost compared to lifetime value?",
-                            "category": "Metrics"
-                        },
-                        {
-                            "_id": "saas_3",
-                            "text": "What's your churn rate and retention strategy?",
-                            "category": "Operations"
-                        }
-                    ],
-                    "physical_product": [
-                        {
-                            "_id": "product_1",
-                            "text": "What are your production costs and gross margins?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "product_2",
-                            "text": "How do you manage your supply chain and inventory?",
-                            "category": "Operations"
-                        },
-                        {
-                            "_id": "product_3",
-                            "text": "What are your distribution channels and retail strategy?",
-                            "category": "Strategy"
-                        }
-                    ],
-                    "service": [
-                        {
-                            "_id": "service_1",
-                            "text": "How do you scale your service delivery beyond your personal time?",
-                            "category": "Operations"
-                        },
-                        {
-                            "_id": "service_2",
-                            "text": "What's your hourly/project rate structure and utilization rate?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "service_3",
-                            "text": "How do you maintain quality as you expand your team?",
-                            "category": "Operations"
-                        }
-                    ]
-                }
-            },
-            "market_analysis": {
-                "name": "Market & Competition Analysis",
-                "questions": [
-                    {
-                        "_id": "market_1",
-                        "text": "What's your total addressable market size and how did you calculate it?",
-                        "category": "Market"
-                    },
-                    {
-                        "_id": "market_2",
-                        "text": "Who are your top 3 competitors and how do you differentiate?",
-                        "category": "Competition"
-                    },
-                    {
-                        "_id": "market_3",
-                        "text": "What barriers to entry exist in your market?",
-                        "category": "Strategy"
-                    },
-                    {
-                        "_id": "market_4",
-                        "text": "What market trends are impacting your growth potential?",
-                        "category": "Market"
-                    }
-                ]
-            },
-            "financial_performance": {
-                "name": "Financial Performance",
-                "questions": {
-                    "pre_revenue": [
-                        {
-                            "_id": "pre_fin_1",
-                            "text": "What's your burn rate and runway?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "pre_fin_2",
-                            "text": "What are your financial projections for the next 24 months?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "pre_fin_3",
-                            "text": "What assumptions underlie your revenue forecasts?",
-                            "category": "Financial"
-                        }
-                    ],
-                    "revenue_generating": [
-                        {
-                            "_id": "rev_fin_1",
-                            "text": "What has your year-over-year revenue growth been?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "rev_fin_2",
-                            "text": "Break down your cost structure between fixed and variable costs.",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "rev_fin_3",
-                            "text": "What's your path to profitability and timeline?",
-                            "category": "Financial"
-                        }
-                    ],
-                    "profitable": [
-                        {
-                            "_id": "prof_fin_1",
-                            "text": "What's your EBITDA and how has it evolved over time?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "prof_fin_2",
-                            "text": "What's your cash conversion cycle?",
-                            "category": "Financial"
-                        },
-                        {
-                            "_id": "prof_fin_3",
-                            "text": "How do you reinvest profits back into the business?",
-                            "category": "Strategy"
-                        }
-                    ]
-                }
-            }
-        }
+    def __init__(self, db: DatabaseConnection, llm_service: LLMService):
+        self.db = db
+        self.llm_service = llm_service
+        self.current_sessions: Dict[str, AssessmentSession] = {}
 
-    def start_assessment(
-        self,
-        business_name: str,
-        business_stage: str,
-        industry: str
-    ) -> AssessmentSession:
+    def start_assessment(self, business_profile: BusinessProfile) -> AssessmentSession:
         """Start a new assessment session."""
-        session = AssessmentSession(
-            business_name=business_name,
-            business_stage=business_stage,
-            industry=industry,
-            start_time=datetime.now(),
-            questions_answers=[],
-            completion_status=0.0
-        )
-        return session
+        try:
+            session = AssessmentSession(
+                business_profile=business_profile,
+                current_phase="Initial Discovery",
+                questions_asked=[],
+                answers_received=[],
+                completed=False
+            )
+            
+            # Store session using business profile ID as key
+            session_id = str(business_profile.id)
+            self.current_sessions[session_id] = session
+            
+            return session
+        except Exception as e:
+            print(f"Error starting assessment: {str(e)}")
+            raise
 
-    def get_next_question(
-        self,
-        session: AssessmentSession,
-        previous_answers: List[Dict[str, Any]] = None
-    ) -> Optional[Question]:
-        """Get the next relevant question based on previous answers and business context."""
-        if previous_answers is None:
-            previous_answers = []
+    def get_next_question(self, session_id: str) -> Optional[Question]:
+        """Get the next question based on the current phase and previous answers."""
+        try:
+            session = self.current_sessions.get(session_id)
+            if not session:
+                raise ValueError("Invalid session ID")
 
-        # Determine current phase based on answers
-        current_phase = self._determine_current_phase(session, previous_answers)
-        
-        # Get questions for current phase
-        phase_questions = self._get_phase_questions(current_phase, session, previous_answers)
-        
-        # Filter out already answered questions
-        answered_ids = {qa["question_id"] for qa in previous_answers}
-        available_questions = [q for q in phase_questions if q["_id"] not in answered_ids]
-        
-        if not available_questions:
+            # Get questions for current phase from database
+            questions = self.db.get_questions_for_stage(
+                session.business_profile.business_stage
+            )
+            
+            if not questions:
+                return None
+
+            # Use LLM to select most relevant question based on context
+            context = {
+                "business_profile": session.business_profile.to_dict(),
+                "previous_answers": [a.to_dict() for a in session.answers_received],
+                "current_phase": session.current_phase
+            }
+            
+            next_question = self.llm_service.select_next_question(questions, context)
+            
+            if next_question:
+                session.questions_asked.append(next_question)
+                
+            return next_question
+        except Exception as e:
+            print(f"Error getting next question: {str(e)}")
             return None
 
-        # Use LLM to select most relevant question
-        selected_question = self._select_next_question(available_questions, session, previous_answers)
-        
-        return Question(
-            id=selected_question["_id"],
-            text=selected_question["text"],
-            category=selected_question["category"],
-            follow_up_questions=selected_question.get("follow_up_questions", [])
-        )
-
-    def process_answer(
-        self,
-        session: AssessmentSession,
-        question: Question,
-        answer_text: str
-    ) -> Answer:
-        """Process and analyze a user's answer."""
-        # Extract structured data using LLM
-        structured_data = self._extract_answer_data(question, answer_text)
-        
-        # Check for red flags
-        red_flags = self._check_red_flags(question, answer_text, structured_data)
-        if red_flags:
-            structured_data["red_flags"] = red_flags
-        
-        # Check for opportunity signals
-        opportunities = self._check_opportunities(question, answer_text, structured_data)
-        if opportunities:
-            structured_data["opportunities"] = opportunities
-        
-        # Create answer object
-        answer = Answer(
-            question_id=question.id,
-            text=answer_text,
-            timestamp=datetime.now(),
-            structured_data=structured_data,
-            confidence_score=self._calculate_answer_confidence(answer_text)
-        )
-        
-        # Update session progress
-        total_questions = self._get_total_questions_estimate(session)
-        session.questions_answers.append({"question_id": question.id, "answer": answer})
-        session.completion_status = len(session.questions_answers) / total_questions
-        
-        return answer
-
-    def _determine_current_phase(
-        self,
-        session: AssessmentSession,
-        previous_answers: List[Dict[str, Any]]
-    ) -> str:
-        """Determine which interview phase to proceed with."""
-        if not previous_answers:
-            return "initial_discovery"
-            
-        num_answers = len(previous_answers)
-        
-        if num_answers < 4:
-            return "initial_discovery"
-        elif num_answers < 8:
-            return "business_model"
-        elif num_answers < 12:
-            return "market_analysis"
-        else:
-            return "financial_performance"
-
-    def _get_phase_questions(
-        self,
-        phase: str,
-        session: AssessmentSession,
-        previous_answers: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Get questions for the current phase."""
-        phase_data = self.interview_phases.get(phase, {})
-        
-        if phase == "business_model":
-            # Determine business type from previous answers
-            business_type = self._determine_business_type(previous_answers)
-            return phase_data.get("questions", {}).get(business_type, [])
-            
-        elif phase == "financial_performance":
-            # Determine financial stage
-            financial_stage = self._determine_financial_stage(previous_answers)
-            return phase_data.get("questions", {}).get(financial_stage, [])
-            
-        return phase_data.get("questions", [])
-
-    def _determine_business_type(
-        self,
-        previous_answers: List[Dict[str, Any]]
-    ) -> str:
-        """Determine the type of business from previous answers."""
-        # Use LLM to analyze previous answers and categorize the business
-        context = self._summarize_previous_answers(previous_answers)
-        
-        prompt = f"""
-        Based on the following business context, determine if this is primarily a:
-        1. Digital/SaaS business
-        2. Physical product business
-        3. Service business
-
-        Context:
-        {context}
-
-        Return only one of: "digital_saas", "physical_product", or "service"
-        """
-        
-        response = self.llm.generate_response(prompt)
-        return response.strip().lower()
-
-    def _determine_financial_stage(
-        self,
-        previous_answers: List[Dict[str, Any]]
-    ) -> str:
-        """Determine the financial stage of the business."""
-        # Use LLM to analyze previous answers and determine financial stage
-        context = self._summarize_previous_answers(previous_answers)
-        
-        prompt = f"""
-        Based on the following business context, determine if this is a:
-        1. Pre-revenue company
-        2. Revenue-generating but not profitable
-        3. Profitable company
-
-        Context:
-        {context}
-
-        Return only one of: "pre_revenue", "revenue_generating", or "profitable"
-        """
-        
-        response = self.llm.generate_response(prompt)
-        return response.strip().lower()
-
-    def _check_red_flags(
-        self,
-        question: Question,
-        answer_text: str,
-        structured_data: Dict[str, Any]
-    ) -> List[str]:
-        """Check for red flags in the answer."""
-        prompt = f"""
-        Analyze this answer for potential red flags from an investor's perspective.
-        Look for issues like:
-        - Inconsistent financial numbers
-        - Unrealistic market size claims
-        - Vague answers about competition
-        - Excessive founder salaries
-        - Unreasonable valuation expectations
-
-        Question: {question.text}
-        Answer: {answer_text}
-        Structured Data: {json.dumps(structured_data)}
-
-        Return a list of specific red flags, or an empty list if none found.
-        """
-        
-        response = self.llm.generate_response(prompt)
+    def process_answer(self, session_id: str, answer: Answer) -> Optional[AssessmentResult]:
+        """Process an answer and update the assessment session."""
         try:
-            return json.loads(response)
-        except:
-            return []
+            session = self.current_sessions.get(session_id)
+            if not session:
+                raise ValueError("Invalid session ID")
 
-    def _check_opportunities(
-        self,
-        question: Question,
-        answer_text: str,
-        structured_data: Dict[str, Any]
-    ) -> List[str]:
-        """Check for opportunity signals in the answer."""
-        prompt = f"""
-        Analyze this answer for positive opportunity signals from an investor's perspective.
-        Look for indicators like:
-        - Unusually high margins for the industry
-        - Proprietary technology or IP
-        - Evidence of product-market fit
-        - Strong team with relevant experience
-        - Clear customer acquisition strategy with proven ROI
+            # Add answer to session
+            session.answers_received.append(answer)
+            
+            # Use LLM to analyze answer
+            analysis = self.llm_service.analyze_answer(
+                answer,
+                session.business_profile,
+                session.current_phase
+            )
+            
+            # Check for red flags
+            if analysis.get("red_flags"):
+                session.red_flags.extend(analysis["red_flags"])
+            
+            # Check for opportunities
+            if analysis.get("opportunities"):
+                session.opportunities.extend(analysis["opportunities"])
+            
+            # Update phase if needed
+            if self._should_advance_phase(session):
+                self._advance_phase(session)
+            
+            # Check if assessment is complete
+            if self._is_assessment_complete(session):
+                return self._generate_assessment_result(session)
+                
+            return None
+        except Exception as e:
+            print(f"Error processing answer: {str(e)}")
+            return None
 
-        Question: {question.text}
-        Answer: {answer_text}
-        Structured Data: {json.dumps(structured_data)}
-
-        Return a list of specific opportunities, or an empty list if none found.
-        """
+    def _should_advance_phase(self, session: AssessmentSession) -> bool:
+        """Determine if the assessment should advance to the next phase."""
+        phases = [
+            "Initial Discovery",
+            "Business Model Deep Dive",
+            "Market & Competition Analysis",
+            "Financial Performance",
+            "Team & Operations",
+            "Investment & Growth Strategy"
+        ]
         
-        response = self.llm.generate_response(prompt)
         try:
-            return json.loads(response)
-        except:
-            return []
+            # Get current phase index
+            current_index = phases.index(session.current_phase)
+            
+            # Check if we have enough information for current phase
+            phase_questions = len([q for q in session.questions_asked 
+                                 if q.phase == session.current_phase])
+            phase_answers = len([a for a in session.answers_received 
+                               if a.question.phase == session.current_phase])
+            
+            # Advance if we have at least 3 questions answered in current phase
+            return phase_questions >= 3 and phase_answers >= 3
+        except Exception as e:
+            print(f"Error checking phase advancement: {str(e)}")
+            return False
 
-    def _get_total_questions_estimate(self, session: AssessmentSession) -> int:
-        """Estimate total number of questions for the assessment."""
-        # Base questions from each phase
-        total = (
-            len(self.interview_phases["initial_discovery"]["questions"]) +
-            len(self.interview_phases["market_analysis"]["questions"])
-        )
+    def _advance_phase(self, session: AssessmentSession) -> None:
+        """Advance the assessment to the next phase."""
+        phases = [
+            "Initial Discovery",
+            "Business Model Deep Dive",
+            "Market & Competition Analysis",
+            "Financial Performance",
+            "Team & Operations",
+            "Investment & Growth Strategy"
+        ]
         
-        # Add business model questions (assume average)
-        business_model_questions = self.interview_phases["business_model"]["questions"]
-        avg_business_model = sum(len(q) for q in business_model_questions.values()) // len(business_model_questions)
-        total += avg_business_model
-        
-        # Add financial questions (assume average)
-        financial_questions = self.interview_phases["financial_performance"]["questions"]
-        avg_financial = sum(len(q) for q in financial_questions.values()) // len(financial_questions)
-        total += avg_financial
-        
-        return total
+        try:
+            current_index = phases.index(session.current_phase)
+            if current_index < len(phases) - 1:
+                session.current_phase = phases[current_index + 1]
+        except Exception as e:
+            print(f"Error advancing phase: {str(e)}")
 
-    def _summarize_previous_answers(
-        self,
-        previous_answers: List[Dict[str, Any]]
-    ) -> str:
-        """Create a summary of previous answers for context."""
-        summary = []
-        for qa in previous_answers:
-            question = self.db.get_question_by_id(qa["question_id"])
-            answer = qa["answer"]
-            summary.append(f"Q: {question['text']}\nA: {answer.text}")
-        return "\n\n".join(summary)
+    def _is_assessment_complete(self, session: AssessmentSession) -> bool:
+        """Check if the assessment is complete."""
+        try:
+            # Check if we're in the last phase
+            if session.current_phase == "Investment & Growth Strategy":
+                # Check if we have enough answers in the last phase
+                last_phase_answers = len([a for a in session.answers_received 
+                                        if a.question.phase == session.current_phase])
+                return last_phase_answers >= 3
+            return False
+        except Exception as e:
+            print(f"Error checking assessment completion: {str(e)}")
+            return False
+
+    def _generate_assessment_result(self, session: AssessmentSession) -> AssessmentResult:
+        """Generate the final assessment result."""
+        try:
+            # Use LLM to analyze all answers and generate comprehensive assessment
+            analysis = self.llm_service.generate_assessment_summary({
+                "business_profile": session.business_profile.to_dict(),
+                "answers": [a.to_dict() for a in session.answers_received],
+                "red_flags": session.red_flags,
+                "opportunities": session.opportunities
+            })
+            
+            # Mark session as completed
+            session.completed = True
+            
+            return AssessmentResult(
+                business_profile=session.business_profile,
+                scores=analysis.get("scores", {}),
+                recommendations=analysis.get("recommendations", []),
+                risks=analysis.get("risks", []),
+                opportunities=analysis.get("opportunities", []),
+                key_findings=analysis.get("key_findings", [])
+            )
+        except Exception as e:
+            print(f"Error generating assessment result: {str(e)}")
+            raise
+
+    def get_session_status(self, session_id: str) -> Dict[str, Any]:
+        """Get the current status of an assessment session."""
+        try:
+            session = self.current_sessions.get(session_id)
+            if not session:
+                raise ValueError("Invalid session ID")
+                
+            return {
+                "current_phase": session.current_phase,
+                "questions_asked": len(session.questions_asked),
+                "answers_received": len(session.answers_received),
+                "completed": session.completed,
+                "red_flags": len(session.red_flags),
+                "opportunities": len(session.opportunities)
+            }
+        except Exception as e:
+            print(f"Error getting session status: {str(e)}")
+            return {}
