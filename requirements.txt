@@ -1,3 +1,11 @@
+streamlit
+pymongo 
+pandas 
+numpy
+python-dotenv
+google-generativeai 
+plotly 
+python-dateutil
 google.generativeai as genai
 google.generativeai
 streamlit
