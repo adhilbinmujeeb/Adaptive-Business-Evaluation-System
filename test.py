@@ -201,6 +201,29 @@ if API_PROVIDER == "gemini":
             print(f"Gemini Flash API error: {e}")
             return f"Error querying Gemini Flash: {str(e)}"
 
+
+    def show_model_evaluation_section():
+    try:
+        st.write("Starting to load model evaluation section...")
+        
+        # Check if collections exist and have data
+        try:
+            scenario_count = model_scenarios_collection.count_documents({})
+            response_count = model_responses_collection.count_documents({})
+            evaluation_count = model_evaluations_collection.count_documents({})
+            
+            st.write(f"Found {scenario_count} scenarios, {response_count} responses, and {evaluation_count} evaluations")
+        except Exception as e:
+            st.error(f"Error checking collection data: {e}")
+            st.error(traceback.format_exc())
+            return
+            
+        # Continue with your existing code...
+        
+    except Exception as e:
+        st.error(f"Error in model evaluation section: {e}")
+        st.error(traceback.format_exc())
+
     def query_gemini_pro_latest(prompt, system_prompt=None):
         try:
             full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
