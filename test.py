@@ -129,7 +129,12 @@ model_responses_collection = db['model_responses']
 model_evaluations_collection = db['model_evaluations']
 
 # Initialize API clients
-API_PROVIDER = st.sidebar.selectbox("API Provider", ["gemini", "groq"], index=0)
+API_PROVIDER = st.sidebar.selectbox(
+    "Select API Provider",
+    ["gemini", "groq"],
+    index=0,
+    label_visibility="visible"
+)
 
 try:
     if API_PROVIDER == "gemini":
@@ -575,23 +580,42 @@ def manage_scenarios():
     with st.form("scenario_form"):
         st.markdown("### Create New Test Scenario")
         
-        scenario_name = st.text_input("Scenario Name", 
-                                      placeholder="E.g., Scientific Reasoning - Vaccine Explanation")
+        scenario_name = st.text_input(
+            "Scenario Name",
+            placeholder="E.g., Scientific Reasoning - Vaccine Explanation",
+            label_visibility="visible"
+        )
         
         category_options = [
             "Reasoning", "Knowledge", "Creativity", "Instruction Following",
             "Consistency", "Safety", "Code & Technical", "Multi-modal", 
             "Summarization", "Empathy"
         ]
-        category = st.selectbox("Category", category_options)
+        category = st.selectbox(
+            "Category",
+            category_options,
+            label_visibility="visible"
+        )
         
-        difficulty = st.slider("Difficulty Level", 1, 5, 3)
+        difficulty = st.slider(
+            "Difficulty Level",
+            1, 5, 3,
+            label_visibility="visible"
+        )
         
-        prompt = st.text_area("Scenario Prompt", height=150, 
-                           placeholder="Enter the prompt/question that will be given to the models...")
+        prompt = st.text_area(
+            "Scenario Prompt",
+            height=150,
+            placeholder="Enter the prompt/question that will be given to the models...",
+            label_visibility="visible"
+        )
         
-        evaluation_instructions = st.text_area("Evaluation Instructions", height=100,
-                                             placeholder="Any special instructions for models evaluating responses to this scenario")
+        evaluation_instructions = st.text_area(
+            "Evaluation Instructions",
+            height=100,
+            placeholder="Any special instructions for models evaluating responses to this scenario",
+            label_visibility="visible"
+        )
         
         submit_button = st.form_submit_button("Add Scenario")
         
@@ -660,13 +684,25 @@ def run_evaluations():
     
     model_keys = list(available_models.keys())
     with col1:
-        if st.checkbox(f"Include {available_models[model_keys[0]]}", value=True):
+        if st.checkbox(
+            f"Include {available_models[model_keys[0]]}",
+            value=True,
+            label_visibility="visible"
+        ):
             selected_models.append(model_keys[0])
     with col2:
-        if st.checkbox(f"Include {available_models[model_keys[1]]}", value=True):
+        if st.checkbox(
+            f"Include {available_models[model_keys[1]]}",
+            value=True,
+            label_visibility="visible"
+        ):
             selected_models.append(model_keys[1])
     with col3:
-        if st.checkbox(f"Include {available_models[model_keys[2]]}", value=True):
+        if st.checkbox(
+            f"Include {available_models[model_keys[2]]}",
+            value=True,
+            label_visibility="visible"
+        ):
             selected_models.append(model_keys[2])
     
     if len(selected_models) < 2:
@@ -683,9 +719,10 @@ def run_evaluations():
             
         scenario_options = {str(s["_id"]): f"{s['name']} ({s['category']})" for s in scenarios}
         selected_scenario_ids = st.multiselect(
-            "Select scenarios to evaluate:",
+            "Select scenarios to evaluate",
             options=list(scenario_options.keys()),
-            format_func=lambda x: scenario_options[x]
+            format_func=lambda x: scenario_options[x],
+            label_visibility="visible"
         )
         
         if len(selected_scenario_ids) == 0:
@@ -695,11 +732,12 @@ def run_evaluations():
         selected_scenario_ids = [ObjectId(id) for id in selected_scenario_ids]
         
         num_rotations = st.slider(
-            "Number of rotations per scenario", 
-            min_value=1, 
-            max_value=3, 
+            "Number of rotations per scenario",
+            min_value=1,
+            max_value=3,
             value=1,
-            help="How many times to rotate through model roles for each scenario"
+            help="How many times to rotate through model roles for each scenario",
+            label_visibility="visible"
         )
         
     except Exception as e:
@@ -895,17 +933,19 @@ def analyze_results():
     
     with col1:
         selected_scenarios = st.multiselect(
-            "Filter by scenarios:",
+            "Filter by scenarios",
             options=[str(s["_id"]) for s in scenarios_with_evals],
             default=[str(s["_id"]) for s in scenarios_with_evals],
-            format_func=lambda x: next((s["name"] for s in scenarios_with_evals if str(s["_id"]) == x), x)
+            format_func=lambda x: next((s["name"] for s in scenarios_with_evals if str(s["_id"]) == x), x),
+            label_visibility="visible"
         )
     
     with col2:
         selected_categories = st.multiselect(
-            "Filter by categories:",
+            "Filter by categories",
             options=list(set(s["category"] for s in scenarios_with_evals)),
-            default=list(set(s["category"] for s in scenarios_with_evals))
+            default=list(set(s["category"] for s in scenarios_with_evals)),
+            label_visibility="visible"
         )
     
     selected_scenario_ids = [ObjectId(id) for id in selected_scenarios] if selected_scenarios else []
@@ -1148,11 +1188,16 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("### Navigation")
-        page = st.radio("", [
-            "💰 Company Valuation",
-            "📊 Business Assessment",
-            "🤖 Model Evaluation"
-        ], key="main_nav")
+        page = st.radio(
+            "Select a page",
+            [
+                "💰 Company Valuation",
+                "📊 Business Assessment",
+                "🤖 Model Evaluation"
+            ],
+            key="main_nav",
+            label_visibility="collapsed"
+        )
 
         st.markdown("---")
         st.markdown(f"<div style='text-align: center; padding: 1rem; font-size: 0.8rem; color: #64748B;'>{datetime.now().strftime('%B %d, %Y')}</div>", unsafe_allow_html=True)
@@ -1185,21 +1230,59 @@ def render_valuation_page():
         col1, col2 = st.columns(2)
         
         with col1:
-            company_name = st.text_input("Company Name", key="company_name")
+            company_name = st.text_input(
+                "Company Name",
+                key="company_name",
+                label_visibility="visible"
+            )
             industry_options = [
                 "Software/SaaS", "E-commerce", "Technology", "Healthcare",
                 "Food & Beverage", "Manufacturing", "Retail", "Services",
                 "Real Estate", "Other"
             ]
-            industry = st.selectbox("Industry", industry_options, key="industry")
-            revenue = st.number_input("Annual Revenue (USD)", min_value=0.0, format="%f", key="revenue")
-            earnings = st.number_input("Annual Earnings/Net Income (USD)", format="%f", key="earnings")
+            industry = st.selectbox(
+                "Industry",
+                industry_options,
+                key="industry",
+                label_visibility="visible"
+            )
+            revenue = st.number_input(
+                "Annual Revenue (USD)",
+                min_value=0.0,
+                format="%f",
+                key="revenue",
+                label_visibility="visible"
+            )
+            earnings = st.number_input(
+                "Annual Earnings/Net Income (USD)",
+                format="%f",
+                key="earnings",
+                label_visibility="visible"
+            )
             
         with col2:
-            assets = st.number_input("Total Assets (USD)", min_value=0.0, format="%f", key="assets")
-            liabilities = st.number_input("Total Liabilities (USD)", min_value=0.0, format="%f", key="liabilities")
+            assets = st.number_input(
+                "Total Assets (USD)",
+                min_value=0.0,
+                format="%f",
+                key="assets",
+                label_visibility="visible"
+            )
+            liabilities = st.number_input(
+                "Total Liabilities (USD)",
+                min_value=0.0,
+                format="%f",
+                key="liabilities",
+                label_visibility="visible"
+            )
             growth_options = ["High", "Moderate", "Low"]
-            growth = st.select_slider("Growth Rate", options=growth_options, value="Moderate", key="growth")
+            growth = st.select_slider(
+                "Growth Rate",
+                options=growth_options,
+                value="Moderate",
+                key="growth",
+                label_visibility="visible"
+            )
 
         st.markdown("### Cash Flow Projections")
         st.markdown("Enter projected cash flows for the next 5 years (USD)")
@@ -1207,7 +1290,13 @@ def render_valuation_page():
         cash_flows = []
         for i, col in enumerate(cf_cols):
             with col:
-                cf = st.number_input(f"Year {i+1}", min_value=0.0, format="%f", key=f"cf_{i}")
+                cf = st.number_input(
+                    f"Year {i+1}",
+                    min_value=0.0,
+                    format="%f",
+                    key=f"cf_{i}",
+                    label_visibility="visible"
+                )
                 cash_flows.append(cf)
 
         submit_button = st.form_submit_button("Calculate Valuation")
@@ -1334,7 +1423,12 @@ def render_assessment_page():
         st.markdown(f"### Question {st.session_state.current_question_idx + 1} of {max_questions}")
         st.markdown(f"**{current_question}**")
 
-        answer = st.text_area("Your Answer", height=100, key=f"answer_{st.session_state.current_question_idx}")
+        answer = st.text_area(
+            "Your Answer",
+            height=100,
+            key=f"answer_{st.session_state.current_question_idx}",
+            label_visibility="visible"
+        )
 
         if st.button("Submit Answer", use_container_width=True):
             if answer.strip():
