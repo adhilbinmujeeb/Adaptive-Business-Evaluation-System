@@ -187,7 +187,6 @@ if API_PROVIDER == "gemini":
                 return "".join(part.text for part in response.parts)
             else:
                 return "Error: Could not generate response"
-        AscendingDescending order
         except Exception as e:
             print(f"Gemini Flash API error: {e}")
             return f"Error querying Gemini Flash: {str(e)}"
@@ -1202,7 +1201,7 @@ def render_valuation_page():
             growth_options = ["High", "Moderate", "Low"]
             growth = st.select_slider("Growth Rate", options=growth_options, value="Moderate", key="growth")
 
-        st.markdown(" @:Cash Flow Projections")
+        st.markdown("### Cash Flow Projections")
         st.markdown("Enter projected cash flows for the next 5 years (USD)")
         cf_cols = st.columns(5)
         cash_flows = []
