@@ -104,7 +104,7 @@ try:
     else:
         groq_client = Groq(api_key=GROQ_API_KEY)
         # Define Groq models you want to use
-        groq_model_names = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile","llama-guard-3-8b","llama3-70b-8192"]
+        groq_model_names = ["gemma2-9b-it", "llama3-8b-8192","llama-guard-3-8b","llama3-70b-8192","llama-3.1-8b-instant"]
         # You might want to quickly test if the client works
         # try:
         #     groq_client.chat.completions.create(messages=[{"role": "user", "content": "Test"}], model="llama3-8b-8192", max_tokens=10)
