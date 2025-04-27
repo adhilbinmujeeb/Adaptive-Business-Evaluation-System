@@ -121,6 +121,50 @@ if not available_models:
     st.error("No AI models could be initialized. Please check your API keys and configurations.")
     st.stop()
 
+# --- Business Scenarios ---
+BUSINESS_SCENARIOS = [
+    {
+        "name": "Early-Stage SaaS",
+        "prompt": "You are interviewing the founder of 'CloudFlow', a 1-year-old B2B SaaS startup providing workflow automation tools for small marketing agencies. They have 15 paying customers, $5k MRR, growing 20% MoM. Seeking $250k seed funding."
+    },
+    {
+        "name": "Established Restaurant",
+        "prompt": "You are interviewing the owner of 'The Corner Bistro', a popular neighborhood restaurant operating for 8 years. Stable revenue around $800k/year, 15% net margin. Owner wants to open a second location and needs $150k."
+    },
+    {
+        "name": "Pre-Revenue Hardware",
+        "prompt": "You are interviewing the inventor of 'AquaPure Home', a smart home water purification device. They have a working prototype and patents pending. No sales yet. Planning a Kickstarter campaign. Need $50k for tooling and initial production run."
+    },
+    {
+        "name": "E-commerce DTC Brand",
+        "prompt": "You are interviewing the founder of 'Zenith Watches', a 3-year-old direct-to-consumer watch brand. $1.2M annual revenue, 40% gross margin, 10% net margin. Facing increased ad costs. Seeking $300k for inventory and marketing expansion."
+    },
+    {
+        "name": "Local Service Business",
+        "prompt": "You are interviewing the owner of 'GreenThumbs Landscaping', a 5-year-old local landscaping service. $300k annual revenue, mostly seasonal. Owner manages 3 crews. Wants $75k for new equipment to handle more clients."
+    },
+    {
+        "name": "Mobile Gaming App",
+        "prompt": "You are interviewing the developers of 'Pixel Quest', a free-to-play mobile RPG launched 6 months ago. 50k downloads, 5k DAU, $1k/month revenue from in-app purchases. Needs $100k for user acquisition and feature development."
+    },
+    {
+        "name": "Biotech Research",
+        "prompt": "You are interviewing the lead scientist of 'NeuroGen Labs', a pre-clinical biotech company developing a novel drug for Alzheimer's. Strong pre-clinical data. Needs $2M Series A for Phase 1 trials."
+    },
+    {
+        "name": "Subscription Box",
+        "prompt": "You are interviewing the founder of 'CraftBox Monthly', a 2-year-old subscription box for craft supplies. 1,500 subscribers at $30/month. 50% gross margin, facing churn issues (10%/month). Seeking $120k for product sourcing and retention marketing."
+    },
+    {
+        "name": "Consulting Firm",
+        "prompt": "You are interviewing the partners of 'StratAlign Consulting', a 10-year-old boutique management consulting firm. $5M annual revenue, 5 partners, 20 consultants. Stable but wants to develop a proprietary software platform. Seeking $750k."
+    },
+    {
+        "name": "Non-Profit Organization",
+        "prompt": "You are interviewing the director of 'CodeFuture Kids', a 4-year-old non-profit teaching coding to underserved youth. Serves 500 kids annually, $200k budget primarily from grants. Seeks $50k bridge funding to cover operational costs while securing larger grants."
+    }
+]
+
 # --- LLM API Call Wrappers ---
 def gemini_qna(query, context=None, model_client=None):
     """Question answering using Gemini."""
@@ -230,7 +274,6 @@ def ask_model(model_key, query, context=None):
         return f"Error: No handler for {model_key}"
 
 # --- Business Assessment Simulation and Evaluation ---
-
 BUSINESS_TOPICS = [
     {"name": "financial", "keywords": ["revenue", "profit", "cash flow", "funding", "investment", "margins"]},
     {"name": "market", "keywords": ["competitors", "market size", "customers", "demand", "industry"]},
@@ -615,9 +658,7 @@ def display_assessment_results(model_key_used):
     Format the response with clear headings and bullet points.
     Focus on actionable insights and specific recommendations derived *solely* from the provided transcript.
     """
-
-    # Use a potentially better model for the final analysis, e.g., Gemini or larger Groq
-    analysis_model_key = 'gemini' if 'gemini' in available_models else list(available_models.keys())[0]  # Default to Gemini if available
+     analysis_model_key = 'gemini' if 'gemini' in available_models else list(available_models.keys())[0]  # Default to Gemini if available
     st.info(f"Generating analysis using: {analysis_model_key}")
 
     with st.spinner("Generating comprehensive business assessment..."):
@@ -688,7 +729,7 @@ def render_evaluation_page():
         # Select and reorder columns for better readability
         display_cols = [
             'scenario', 'model_a', 'model_b', 'evaluator_model', 'preference',
-           'avg_score_a', 'avg_score_b', 'rationale',
+            'avg_score_a', 'avg_score_b', 'rationale',
             'score_a_relevance', 'score_a_depth', 'score_a_consistency',
             'score_b_relevance', 'score_b_depth', 'score_b_consistency',
             'raw_eval_output'  # Keep raw output for inspection if needed
